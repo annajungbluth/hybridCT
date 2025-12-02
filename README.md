@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17785725.svg)](https://doi.org/10.5281/zenodo.17785725)
+
 # HybridCT
 HybridCT is a computationally efficient method for practical cloud tomography that combines deep learning and linear algebra to reconstruct cloud extinction volumes from multi-angle imaging observations.
 It combines a retrieval emulator with a reconstruction stage: (1) the retrieval is emulated using a deep learning U-Net architecture which is trained to map multi-angle radiance measurements into optical thickness values. (2) the reconstruction stage takes these multi-angle optical thickness values as input and uses SART (Simultaneous Algebraic Reconstruction Technique) to computationally reconstruct the cloud extinction volume.
