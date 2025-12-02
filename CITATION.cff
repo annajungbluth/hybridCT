@@ -18,7 +18,7 @@ date-released: "2025-12-01"
 license: "Apache-2.0"
 repository-code: "https://github.com/lforster/hybridCT"
 url: "https://github.com/lforster/hybridCT"
-doi: "10.5281/zenodo.SOFTWARE_VERSION_DOI"
+doi: "10.5281/zenodo.17785726"
 
 
 # ----------------------------
@@ -58,7 +58,7 @@ preferred-citation:
     - family-names: "LaHaye"
       given-names: "Nicholas"
       orcid: "https://orcid.org/0000-0001-6584-7315"
-  doi: "10.5281/zenodo.SOFTWARE_VERSION_DOI"
-  url: "https://doi.org/10.5281/zenodo.SOFTWARE_VERSION_DOI"
+  doi: "10.5281/zenodo.17785726"
+  url: "https://doi.org/10.5281/zenodo.17785726"
   date-released: "2025-12-01"
 
