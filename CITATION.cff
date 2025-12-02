@@ -1,0 +1,64 @@
+cff-version: 1.2.0
+title: "HybridCT"
+version: "v1.0.0"
+message: "If you use this software, please cite it as below."
+type: software
+abstract: >
+    HybridCT is a computationally efficient method for practical cloud tomography that combines deep learning and linear algebra to reconstruct cloud extinction volumes from multi-angle imaging observations. It combines a retrieval emulator with a reconstruction stage: (1) the retrieval is emulated using a deep learning U-Net architecture which is trained to map multi-angle radiance measurements into optical thickness values. (2) the reconstruction stage takes these multi-angle optical thickness values as input and uses SART (Simultaneous Algebraic Reconstruction Technique) to computationally reconstruct the cloud extinction volume. This repository contains code and resources to demonstrate the method using synthetic cloud fields from Large Eddy Simulations and synthetic multi-angle radiance fields which were rendered using the 3D Monte Carlo radiative tranfer model MYSTIC and the libRadtran library. The synthetic multi-angle images represent the viewing angle geometry of the Multi-angle Imaging Spectroradiometer (MISR) onboard the Terra spacecraft at its red channel (670 nm).
+
+authors:
+  - family-names: "Forster"
+    given-names: "Linda"
+    affiliation: "Jet Propulsion Laboratory, California Institute of Technology"
+  - family-names: "LaHaye"
+    given-names: "Nicholas"
+    affiliation: "Jet Propulsion Laboratory, California Institute of Technology"
+
+date-released: "2025-12-01"
+license: "Apache-2.0"
+repository-code: "https://github.com/lforster/hybridCT"
+url: "https://github.com/lforster/hybridCT"
+doi: "10.5281/zenodo.SOFTWARE_VERSION_DOI"
+
+
+# ----------------------------
+# RELATED WORKS
+# ----------------------------
+related_resources:
+  # DATASET
+  - relation: "isSupplementedBy"
+    identifier: "10.5281/zenodo.15171312"
+    resource-type: dataset
+    title: "HybridCT Dataset -- ground truth, training, predicted data, and model parameters"
+
+  # PUBLICATION 1
+  - relation: "isDocumentedBy" 
+    identifier: "TBD"
+    resource-type: publication-article
+    title: "HybridCT: Computationally Efficient 3D Cloud Tomography by Combining Deep Learning and Algebraic Reconstruction"
+
+  # PUBLICATION 2
+  - relation: "isDocumentedBy"
+    identifier: "TBD"
+    resource-type: publication-article
+    title: "A Deep Learning Approach to Predict Cloud Properties from Multi-Angle Imaging"
+
+
+# ----------------------------
+# OPTIONAL EXTRA METADATA
+# ----------------------------
+preferred-citation:
+  type: software
+  title: "HybridCT"
+  version: "v1.0.0"
+  authors:
+    - family-names: "Forster"
+      given-names: "Linda"
+      orcid: "https://orcid.org/0000-0002-9738-9571"
+    - family-names: "LaHaye"
+      given-names: "Nicholas"
+      orcid: "https://orcid.org/0000-0001-6584-7315"
+  doi: "10.5281/zenodo.SOFTWARE_VERSION_DOI"
+  url: "https://doi.org/10.5281/zenodo.SOFTWARE_VERSION_DOI"
+  date-released: "2025-12-01"
+

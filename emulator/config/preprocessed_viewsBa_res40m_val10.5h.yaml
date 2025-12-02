@@ -1,0 +1,61 @@
+
+load_and_scale: False
+batch_size: 128
+epochs: 100
+learning_rate: 0.0015
+
+tile_fname: "./artifacts/training_data/rico/training_data_viewsBa_RICO_40m_64x64_unet.npz"
+process_image: True
+test_ratio: 0.4
+val_ratio: 0.1
+normalize_input: True
+normalize_target: True
+log_scale_input: False
+log_scale_target: False
+
+grid_field: "y"
+vza_field: "vza"
+angles: [45.6]
+multiview: False
+input_field: "rad"
+target_field: "tau"
+input_fname: [
+  #"../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0.nc",
+    "../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_12.0h_AOD0.1_WIND10.0.nc",
+    "../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_15.0h_AOD0.1_WIND10.0.nc",
+    "../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_18.0h_AOD0.1_WIND10.0.nc",
+    "../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_30.0h_AOD0.1_WIND10.0.nc",
+    "../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_34.5h_AOD0.1_WIND10.0.nc",
+]
+target_fname: [
+  # "../data/training_data/MISR_40m_80x80km_10.5h_optical_thickness.nc",
+    "../data/training_data/MISR_40m_80x80km_12.0h_optical_thickness.nc",
+    "../data/training_data/MISR_40m_80x80km_15.0h_optical_thickness.nc",
+    "../data/training_data/MISR_40m_80x80km_18.0h_optical_thickness.nc",
+    "../data/training_data/MISR_40m_80x80km_30.0h_optical_thickness.nc",
+    "../data/training_data/MISR_40m_80x80km_34.5h_optical_thickness.nc",
+    ]
+fill_value: -9.999e-9
+stride: 32
+offset_x: 0
+offset_y: 0
+tile_size: 64
+resolution: 0.040
+dx: 0.04
+stratify: False
+metric_tile_size: 8
+tau_min_threshold: 0.05
+
+plot_test_images: False
+plot_dir: "./artifacts/output_viewsBa_40m_val10.5h/plots"
+
+run_tune: False
+grace_period: 10
+reduction_factor: 2
+num_samples: 30
+out_config: "./artifacts/output_viewsBa_40m_val10.5h/best_trial_viewsBa_config.yaml"
+
+out_dir: "./artifacts/output_viewsBa_40m_val10.5h/"
+training_data_path: "./artifacts/output_viewsBa_40m_val10.5h/"
+mount_dir: "./artifacts/output_viewsBa_40m_val10.5h/"
+state_dict: "unet_ct.pth"

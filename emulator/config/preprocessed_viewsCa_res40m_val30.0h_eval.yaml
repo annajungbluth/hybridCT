@@ -1,0 +1,51 @@
+
+load_and_scale: False
+batch_size: 128
+epochs: 100
+learning_rate: 0.0015
+
+tile_fname: "./artifacts/training_data/rico/training_data_viewsCa_RICO_40m_64x64_unet.npz"
+process_image: True
+test_ratio: 0.2
+val_ratio: 0.1
+normalize_input: True
+normalize_target: True
+log_scale_input: False
+log_scale_target: False
+
+grid_field: "y"
+vza_field: "vza"
+angles: [60]
+multiview: False
+input_field: "rad"
+target_field: "tau"
+input_fname: [
+  "../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_30.0h_AOD0.1_WIND10.0_toa.nc",
+]
+target_fname: [
+   "../data/training_data/MISR_40m_80x80km_30.0h_optical_thickness_toa.nc",
+    ]
+fill_value: -9.999e-9
+stride: 64
+offset_x: 0
+offset_y: 0
+tile_size: 64
+resolution: 0.040
+dx: 0.04
+stratify: False
+metric_tile_size: 8
+tau_min_threshold: 0.05
+
+plot_test_images: False
+plot_dir: "./artifacts/output_viewsCa_40m_val30.0h_toa/plots"
+
+run_tune: False
+grace_period: 10
+reduction_factor: 2
+num_samples: 30
+out_config: "./artifacts/output_viewsCa_40m_val30.0h_toa/best_trial_viewsCa_config.yaml"
+
+out_dir: "./artifacts/output_viewsCa_40m_val30.0h_toa/"
+training_data_path: "./artifacts/output_viewsCa_40m_val30.0h_toa/"
+mount_dir: "./artifacts/output_viewsCa_40m_val10.5h/"
+state_dict: "unet_ct.pth"

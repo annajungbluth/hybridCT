@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybridCT"
+version = "0.1.0"
+description = "3D cloud tomographic reconstruction algorithm using a computationally efficient hybrid (DL + SART) approach."
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "numpy<2",
+    "dask",
+    "netCDF4",
+    "bottleneck",
+    "xarray",
+    "jupyter",
+    "matplotlib",
+    "pandas",
+    "scikit-image",
+    "numba",
+    "tqdm",
+    "torch",
+    "ray",
+    "tabulate",
+    "ray[tune]",
+    "tensorboard",
+    "scikit-learn==1.5.1",
+    "lightning",
+    "mimo-unet-forked @ git+ssh://git@github.com/lforster/MIMO-Unet.git@build/pyproject",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["reconstruction*", "emulator*"]
+exclude = ["venv*", "data*", "*egg-info*", "*/__pycache__*"]

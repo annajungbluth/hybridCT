@@ -1,0 +1,93 @@
+load_and_scale: True
+batch_size: 35
+epochs: 40
+learning_rate: 0.0001
+weight_decay: 0.0
+scheduler_step_size: 20
+scheduler_gamma: 0.5
+
+scenes: [
+  "../../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0.nc"
+]
+
+input_fname: [
+  "../../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0.nc"
+]
+
+target_fname: [
+  "../../data/training_data/MISR_40m_80x80km_10.5h_optical_thickness.nc"
+]
+
+
+fill_value: -9.999e-9 
+test_ratio: 0.2
+val_ratio: 0.1
+stratify: False
+stratify_check_center: False
+stratify_center_window_size: 10
+tau_min_threshold: 0.05
+cloudy_tile_percent_threshold: 0.8
+
+input_scaler: "MinMax"
+target_scaler: "MinMax"
+log_scale_input: False
+log_scale_target: False
+
+#cloud_height_avg: 1.55 # km
+dx: 0.04
+resolution: 0.28
+
+multiview: False
+angles: [0]
+
+process_image: True
+grid_field: "y"
+vza_field: "vza"
+cloud_mask_field: "cloud_mask"
+input_field: "rad"
+target_field: "tau"
+stride: 2
+offset_x: 0
+offset_y: 0
+tile_size: 32
+nadir_index: 8
+
+plot_test_images: False
+metric_tile_size: 8
+plot_tiles: False
+
+run_tune: False
+tune_tiles: False
+grace_period: 10
+reduction_factor: 2
+num_samples: 100
+out_config: "output/best_trial_config.yaml"
+
+out_dir: "output/test_mimo_unet_nadir/"
+output_dir: "output/test_mimo_unet_nadir/"
+plot_dir: "output/test_mimo_unet_nadir/"
+device: "cpu"
+model_dir: "artifacts/mimo_unet/nadir/"
+checkpoint_path: "output/test_mimo_unet_nadir/"
+model_checkpoint_paths: ["artifacts/mimo_unet/nadir/cloud_unet.ckpt"]
+state_dict: "cloud_unet.ckpt"
+
+use_mimo: True
+mimo_num_subnetworks: 5
+mimo_filter_base_count: 64
+mimo_final_dropout_rate: 0.0
+mimo_encoder_dropout_rate: 0.0
+mimo_center_dropout_rate: 0.0
+mimo_core_dropout_rate: 0.0
+mimo_decoder_dropout_rate: 0.0
+mimo_loss_buffer_size: 15
+mimo_loss_buffer_temperature: 0.3
+mimo_input_repetition_probability: 0.3
+mimo_batch_repetitions: 2
+mimo_loss: "laplace_nll"
+rng_seed: 1
+ 
+
+transform_fliph_prob: 0.3
+transform_flipv_prob: 0.3
+   
