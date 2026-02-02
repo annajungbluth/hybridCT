@@ -60,12 +60,13 @@ def project2com(da, cloud_height_avg, dx):
     Returns:
         xarray.DataArray: Projected data.
     """
-    data_proj = np.zeros_like(da.data)
-    x_coord = da.sel(vza=0).x.data
+    data_proj = np.zeros_like(da.data) # create empty array for projected data
+    x_coord = da.sel(vza=0).x.data # x-coordinates from nadir view
     for ivza, vza in enumerate(da.vza.data):
-        view = da.sel(vza=vza)
-        idx, grid_new = get_projection_sortIndex(vza, cloud_height_avg, x_coord, dx)
-        proj_shift = grid_new.min()
+        view = da.sel(vza=vza) # select view at given VZA
+        # perform parallex correction by projecting to cloud COM height
+        idx, grid_new = get_projection_sortIndex(vza, cloud_height_avg, x_coord, dx) # get sort index for projection
+        proj_shift = grid_new.min() # calculate projection shift
         _data_proj = xr.DataArray(view.data[idx,:],
                                   coords={"x": view.x.data+proj_shift, "y": view.y.data},
                                   dims=(["x", "y"]))
@@ -114,10 +115,12 @@ def wrap_around(dim_slice, data, dx=0.02, dim="x"):
     if start < dim_min:
         idx, ival = get_closest_index(dim_min - start, data[dim].data, dx)
         # move columns to beginning of field in negative x-direction
+        # NOTE: shouldn't the dimension be modular, rather than always x?
         return data.roll(x=idx, roll_coords=False).sel(**{dim: slice(dim_min, stop-start)})
     elif stop > dim_max:
         idx, ival = get_closest_index(dim_max-start, data[dim].data, dx)
         # move columns to beginning of field in negative x-direction
+        # NOTE: shouldn't the dimension be modular, rather than always x?
         return data.roll(x=idx, roll_coords=False).sel(**{dim: slice(0, stop-start)})
     else:
         return data.sel(**{dim: dim_slice})
@@ -134,24 +137,25 @@ def get_cos_projection(vza, dx, x_center, _data, offset=0):
     Returns:
         xarray.DataArray: cos-projected dataset.
     """
-    upsampling_factor = 100.
-    x_up = np.linspace(_data.x.data[0], _data.x.data[-1], int(upsampling_factor) * len(_data.x))
-    data = _data.interp(x=x_up)
-    factor = np.cos(np.deg2rad(vza))
-    dx_proj = dx/upsampling_factor * factor
-    xmax = data.x.data.max()
-    xmin = data.x.data.min()
+    # NOTE: This could be reduced by upsampling by a smaller factor?
+    upsampling_factor = 100. # upsampling factor to avoid interpolation artifacts
+    x_up = np.linspace(_data.x.data[0], _data.x.data[-1], int(upsampling_factor) * len(_data.x)) # upsample x grid
+    data = _data.interp(x=x_up) # interpolate data to upsampled x grid
+    factor = np.cos(np.deg2rad(vza)) # cosine factor for projection = 0.5 for 60 deg
+    dx_proj = dx/upsampling_factor * factor # in km, correct pixel spacing by cosine and upsampling factor
+    xmax = data.x.data.max() # get max x value
+    xmin = data.x.data.min() # get min x value
     x_proj = np.arange(xmin, xmax+dx_proj, dx_proj)
-    nx = len(data.x)
-    nx_proj = len(x_proj)
+    nx = len(data.x) # original number of x points = 26500
+    nx_proj = len(x_proj) # projected number of x points = 79089
     # pad xarray to match projected bin size
-    pad = nx_proj - nx
-    pad_before = pad//2
-    pad_after = pad - pad_before
-    data_pad = data.pad({"x": (pad_before, pad_after)}, constant_values=0)
-    data_proj = data_pad.assign_coords({"x": x_proj})
+    pad = nx_proj - nx # amount of padding needed = 52589
+    pad_before = pad//2 # pad before = 26294
+    pad_after = pad - pad_before # pad after = 26295
+    data_pad = data.pad({"x": (pad_before, pad_after)}, constant_values=0) # pad with zeros
+    data_proj = data_pad.assign_coords({"x": x_proj}) # assign new x coordinates
     # interpolate to x grid from nadir view
-    data_new = data_proj.interp(x=(x_center+offset))
+    data_new = data_proj.interp(x=(x_center+offset)) # interpolate to original x grid center
     return data_new
 
 def find_cosine_window(vza, x_range_an, dx, stretch=100):
@@ -159,18 +163,19 @@ def find_cosine_window(vza, x_range_an, dx, stretch=100):
 
     Args:
         vza (float): Viewing zenith angle in degrees.
-        x_range_an (numpy.ndarray or list): Range of x values for analysis.
+        x_range_an (numpy.ndarray or list): Range of x values for analysis. This is typically the x-coordinates (in km) of the nadir view.
         dx (float): Grid spacing in the x direction.
+        stretch (int, optional): Stretch factor to adjust the window size. Defaults to 100.
 
     Returns:
         slice: A slice object representing the cosine window.
     """
-    factor = np.cos(np.deg2rad(vza))
+    factor = np.cos(np.deg2rad(vza)) # cosine factor for projection = 0.5 for 60 deg
     size = x_range_an.max() - x_range_an.min()
-    radius = size/2.
+    radius = size/2. # radius of cloud region = 0.43999
     x_center = x_range_an.min() + radius
     #print(f"x_center of cosine window {x_center}")
-    window = slice(x_center - radius/factor-(stretch*dx), x_center+radius/factor+(stretch*dx))
+    window = slice(x_center - radius/factor-(stretch*dx), x_center+radius/factor+(stretch*dx)) # in km
     return window
 
 
@@ -257,7 +262,7 @@ def generate_view_alternative(data, delta_z, slx, sly, offset=0, dx=0.04):
     return views
 
 def generate_views(_data, slx, sly, dx, cloud_COM=1.5, angles=[-60,0,60], offset=[]):
-    data = project2com(_data, cloud_COM, dx)
+    data = project2com(_data, cloud_COM, dx) # project to cloud COM for parallex correction
     # select nadir view
     nadir = data.sel(vza=0)[slx, sly]
     # loop over off-nadir views and correct for periodic BCs
@@ -266,8 +271,11 @@ def generate_views(_data, slx, sly, dx, cloud_COM=1.5, angles=[-60,0,60], offset
         if vza == 0:
             cameras.append(nadir)
         else:
+            # NOTE: this part crops the quivalent of the cloud region in the off-nadir views
             # same window for +/-vza since all 9 views are around cloud COM
-            x_slice = find_cosine_window(abs(vza), nadir.x.data, dx)
+            x_slice = find_cosine_window(abs(vza), nadir.x.data, dx) # calculates the window size needed to cover the cloud region based on cosine projection
+            # wrap around through rolling in case the slice goes beyond domain boundaries
+            # select the off-nadir view within the cosine window
             off_nadir = wrap_around(x_slice, data.sel(vza=vza), dx)[:,sly]
             off_nadir_proj = get_cos_projection(vza, dx, nadir.x, off_nadir, offset[ivza])
             cameras.append(off_nadir_proj.data)

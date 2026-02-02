@@ -5,13 +5,17 @@ from numba import jit
 
 def custom_radon(image, theta, resolution, rotation_center=None):
 
+    # shape of the input image is (66, 66), which is (nz, nx)
+    # theta = [-70.5, -60. , -45.6, -26.1,   0. ,  26.1,  45.6,  60. ,  70.5]
+    # resolution = 0.04
+    # rotation_center = None
     radon_image = np.zeros((image.shape[0], len(theta)), dtype=image.dtype)
     if rotation_center is None:
-        center = image.shape[0] // 2
-    else:
+        center = image.shape[0] // 2 # center = 33
+    else: 
         center = rotation_center
 
-    for i, angle in enumerate(np.deg2rad(theta)):
+    for i, angle in enumerate(np.deg2rad(theta)): # loop over 9 angles
         cos_a, sin_a = np.cos(angle), np.sin(angle)
         R = np.array(
             [
@@ -21,8 +25,8 @@ def custom_radon(image, theta, resolution, rotation_center=None):
             ]
         )
         rotated = warp(image, R, clip=False) * resolution
-        radon_image[:, i] = rotated.sum(0)
-    return radon_image
+        radon_image[:, i] = rotated.sum(0) # sum over all height (nz)
+    return radon_image # shape (66, 9), equivalent to (n_detectors (x-pixels), n_angles)
 
 
 def custom_radon_ray_sum(image, theta, resolution, rotation_center=None):
@@ -120,28 +124,29 @@ def iradon_sart_custom(
            https://en.wikipedia.org/wiki/Kaczmarz_method
 
     """
+    # the image is the reconstruction estimate (or prior), with shape (nz, nx), i.e. (66, 66)
     if image is None:
-        image = np.zeros((radon_image.shape[0],radon_image.shape[0]))
+        image = np.zeros((radon_image.shape[0],radon_image.shape[0])) # if no prior, start from zeros
     if mask is None:
-        mask = np.ones((radon_image.shape[0],radon_image.shape[0]), dtype="bool")
+        mask = np.ones((radon_image.shape[0],radon_image.shape[0]), dtype="bool") # if no mask, all True with shape (nz, nx), i.e. (66, 66)
     dtype = np.float32
     #if projection_shifts is None:
-    projection_shifts = np.zeros((radon_image.shape[1]), np.float32)
+    projection_shifts = np.zeros((radon_image.shape[1]), np.float32) # shape (n_angles,), all zeros
 
-    reconstructed_shape = (radon_image.shape[0], radon_image.shape[0])
+    reconstructed_shape = (radon_image.shape[0], radon_image.shape[0]) # shape (nz, nx), i.e. (66, 66)
 
-    for angle_index in order_angles_golden_ratio(theta):
-        image_update = sart_projection_update(
-            image,
-            mask,
+    for angle_index in order_angles_golden_ratio(theta): # organizes angles in golden ratio order to support faster SART convergence
+        image_update = sart_projection_update( # processes in order [0, ]
+            image, # shape (nz, nx), i.e. (66, 66). This is the current reconstruction estimate
+            mask, # shape (nz, nx), i.e. (66, 66)
             theta[angle_index],
-            radon_image[:, angle_index],
-            rotation_center,
-            projection_shifts[angle_index],
-            resolution,
-            apply_hamming_window,
-        )
-        image += relaxation * image_update
+            radon_image[:, angle_index], # shape (n_detectors,), i.e. (66,)
+            rotation_center, # usually None
+            projection_shifts[angle_index], # usually 0.
+            resolution, # resolution of 0.04
+            apply_hamming_window, # usually False
+        ) # returns the correction to the reconstruction estimate from this projection angle, shape (nz, nx), i.e. (66, 66)
+        image += relaxation * image_update # the relaxation prevents overshooting and oscillations. This makes converge slower but more stable
         if clip is not None:
             image = np.clip(image, clip[0], clip[1])
     return image
@@ -167,51 +172,70 @@ def bilinear_ray_sum(image, mask, _theta, ray_position, resolution, rotation_cen
     norm_of_weights :
         A measure of how long the ray's path through the reconstruction circle was.
     """
-    theta = _theta / 180. * pi
-    radius = image.shape[0] // 2 - 1
-    projection_center = image.shape[0] // 2
+    # this function is the forward projection operation using bilinear interpolation
+    theta = _theta / 180. * pi # convert to radians
+    radius = image.shape[0] // 2 - 1 # image.shape[0] = 66, radius = 32, reconstruction circle radius
+    projection_center = image.shape[0] // 2 # projection center = 33
     if rotation_center is None:
-        rotation_center = image.shape[0] // 2
-    t = ray_position - projection_center
-    s0 = sqrt(radius * radius - t * t) if radius * radius >= t * t else 0.
+        rotation_center = image.shape[0] // 2 # rotation center = 33
+    t = ray_position - projection_center # offset from center, ray_position goes from 0 to 65
+    s0 = sqrt(radius * radius - t * t) if radius * radius >= t * t else 0. # half-length of ray within circle
     Ns = 2 * ceil(2 * s0)  # number of steps along the ray
-    ray_sum = 0.
+    ray_sum = 0. 
     weight_norm = 0.
 
     if Ns > 0:
-        ds = 2 * s0 / Ns
-        dx = -ds * cos(theta)
-        dy = -ds * sin(theta)
-        x0 = s0 * cos(theta) - t * sin(theta)
-        y0 = s0 * sin(theta) + t * cos(theta)
-        for k in range(int(Ns) + 1):
-            x = x0 + k * dx
-            y = y0 + k * dy
-            index_i = x + rotation_center
-            index_j = y + rotation_center
-            i = int(floor(index_i))
-            j = int(floor(index_j))
-            di = index_i - floor(index_i)
-            dj = index_j - floor(index_j)
-            if mask[i,j] == True:
-                if i > 0 and j > 0:
-                    weight = (1. - di) * (1. - dj) * ds * resolution
+        ds = 2 * s0 / Ns # step size along the ray
+        dx = -ds * cos(theta) # step size in x
+        dy = -ds * sin(theta) # step size in y
+        x0 = s0 * cos(theta) - t * sin(theta) # x-coordinate of where the ray enters the circle
+        y0 = s0 * sin(theta) + t * cos(theta) # y-coordinate of where the ray enters the circle
+        for k in range(int(Ns) + 1): # loop through each step along the ray
+            """
+            Simple pseudocode for bilinear interpolation ray sum:
+
+            ray_sum = 0
+            for each sample point along the ray:
+                value_at_this_point = bilinear_interpolate(image, position)
+                ray_sum += value_at_this_point
+            return ray_sum
+
+            This is calculating the (discreet) line integral along the ray through the image.
+            Mathematically: ray_sum ≈ ∫_ray β(s) ds
+            Why bilinear instead of just nearest pixel?
+                - Smooth, sub-pixel accuracy
+                - Reduces aliasing artifacts
+                - More accurate line integrals
+            """
+            x = x0 + k * dx # get the x-coordinate at step k
+            y = y0 + k * dy # get the y-coordinate at step k
+            index_i = x + rotation_center # convert to image index
+            index_j = y + rotation_center # convert to image index
+            i = int(floor(index_i)) # integer part (whole pixel row)
+            j = int(floor(index_j)) # integer part (whole pixel column)
+            di = index_i - floor(index_i) # decimal part (how far into the pixel row)
+            dj = index_j - floor(index_j) # decimal part (how far into the pixel column)
+            if mask[i,j] == True: # only accumulate if within mask
+                # needs to calculate weighted sum, since we might be between 4 neighboring pixels
+                if i > 0 and j > 0: 
+                    # mutliply by ds to account for step size along ray, and resolution to convert to physical units
+                    weight = (1. - di) * (1. - dj) * ds * resolution # weight for top-left pixel
                     ray_sum += weight * image[i, j]
                     weight_norm += weight * weight
-                if i > 0 and j < image.shape[1] - 1:
+                if i > 0 and j < image.shape[1] - 1:  # weight for top-right pixel
                     weight = (1. - di) * dj * ds * resolution
                     ray_sum += weight * image[i, j+1]
                     weight_norm += weight * weight
-                if i < image.shape[0] - 1 and j > 0:
+                if i < image.shape[0] - 1 and j > 0: # weight for bottom-left pixel
                     weight = di * (1 - dj) * ds * resolution
                     ray_sum += weight * image[i+1, j]
                     weight_norm += weight * weight 
-                if i < image.shape[0] - 1 and j < image.shape[1] - 1:
+                if i < image.shape[0] - 1 and j < image.shape[1] - 1: # weight for bottom-right pixel
                     weight = di * dj * ds * resolution
                     ray_sum += weight * image[i+1, j+1]
                     weight_norm += weight * weight
 
-    return ray_sum, weight_norm
+    return ray_sum, weight_norm # the weight_norm is used to normalize rays, central rays are longer than edge rays
 
 @jit
 def bilinear_ray_update(image, _image_update, theta, ray_position, deviation, resolution, apply_hamming_window, rotation_center=None):
@@ -232,23 +256,40 @@ def bilinear_ray_update(image, _image_update, theta, ray_position, deviation, re
     -------
     deviation :
         Deviation before updating the image.
+
+
+
+    Addiitional Notes:
+    -----------
+    Backprojection (bilinear_ray_update):
+        - Walk along the same ray as in bilinear_ray_sum
+        - Write corrections to pixels
+        - Distribute deviation (error) back to all pixels the ray passed through
+        - Positive deviation -> increase pixel values
+        - Negative deviation -> decrease pixel values
+        - Not equal distribution:
+            - Within each sample point: split unequally among 4 neighbors (bilinear)
+            - Along the ray: usually equal, but reduced at endpoints if Hamming is enabled
+        - But this ignores the mask, and distributes to all pixels along the ray
+        - The mask is applied later in sart_projection_update to zero out updates outside the mask
+        - Result: pixels at the center of the ray path get more correction than those at edges, and within each sample location, closer pixels get more weight than farther ones.
     """
 
-    theta = theta / 180. * pi
-    radius = image.shape[0] // 2 - 1
-    projection_center = image.shape[0] // 2
+    theta = theta / 180. * pi # convert to radians
+    radius = image.shape[0] // 2 - 1 # reconstruction circle radius
+    projection_center = image.shape[0] // 2 # projection center
     if rotation_center is None:
-        rotation_center = image.shape[0] // 2
+        rotation_center = image.shape[0] // 2 # rotation center
     # ray position relative to center
     t = ray_position - projection_center
     # 2*s0 = distance to raytrace within circle of radius
     s0 = sqrt(radius * radius - t * t) if radius * radius >= t * t else 0.
     # total distance to raytrace in pixels
-    Ns = 2 * ceil(2 * s0)
-    hamming_beta = 0.46164
-    hamming_window = 1.
+    Ns = 2 * ceil(2 * s0) 
+    hamming_beta = 0.46164 # standard value for Hamming window
+    hamming_window = 1. # default value if not applying Hamming window
 
-    if Ns > 0:
+    if Ns > 0: # walk along the ray
         # step size, slant path
         ds = 2 * s0 / Ns
         # step size in x and y
@@ -266,7 +307,7 @@ def bilinear_ray_update(image, _image_update, theta, ray_position, deviation, re
             j = int(floor(index_j))
             di = index_i - floor(index_i)
             dj = index_j - floor(index_j)
-            if apply_hamming_window:
+            if apply_hamming_window: # usually False
                 hamming_window = ((1 - hamming_beta) - hamming_beta * cos(2 * pi * k / (Ns - 1)))
             # update via bilinear interpolation
             if i > 0 and j > 0:
@@ -283,7 +324,7 @@ def bilinear_ray_update(image, _image_update, theta, ray_position, deviation, re
                                            * ds * hamming_window) * resolution
     return _image_update
 
-@jit
+@jit # compiles with numba in C-speed
 def sart_projection_update(image, mask, theta, projection, rotation_center=None, projection_shift=0., resolution=1., apply_hamming_window=False):
     """
     Compute update to a reconstruction estimate from a single projection
@@ -308,9 +349,11 @@ def sart_projection_update(image, mask, theta, projection, rotation_center=None,
         added to ``image`` to improve the reconstruction estimate
     """
     dtype = np.float32 #if image.dtype == np.float32 else np.float64
-    image_update = np.zeros_like(image, dtype=dtype)
-    for ray_position in range(projection.shape[0]):
+    image_update = np.zeros_like(image, dtype=dtype) # image shape (nz, nx), i.e. (66, 66)
+    # projection is the sinogram column for this angle, shape (n_detectors,), i.e. (66,)
+    for ray_position in range(projection.shape[0]): # loop over each ray position, i.e. 66 positions. This assumes rays come straight through each pixel column
         # raytracing of prior guess
+        # ray here just means "line integral path", not actual photon rays
         ray_sum, weight_norm = bilinear_ray_sum(image, mask, theta, ray_position, resolution, rotation_center)
         # compute deviation between sinogram of prior and measurement
         if weight_norm > 0.:
@@ -320,6 +363,8 @@ def sart_projection_update(image, mask, theta, projection, rotation_center=None,
         # update
         image_update = bilinear_ray_update(image, image_update, theta, ray_position, deviation, resolution, apply_hamming_window, rotation_center)
 
+        # apply mask to image update, and zero out updates outside the mask
+        # NOTE: could the loop be replaced with image_update *= mask?
         for i in range(mask.shape[0]):
             for j in range(mask.shape[1]):
                 if mask[i,j] == False:
