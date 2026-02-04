@@ -7,15 +7,15 @@ scheduler_step_size: 20
 scheduler_gamma: 0.5
 
 scenes: [
-  "../../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0.nc"
+  "/Users/annajungbluth/Desktop/git/hybridCT/data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0_toa.nc"
 ]
 
 input_fname: [
-  "../../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0.nc"
+  "/Users/annajungbluth/Desktop/git/hybridCT/data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0_toa.nc"
 ]
 
 target_fname: [
-  "../../data/training_data/MISR_40m_80x80km_10.5h_optical_thickness.nc"
+  "/Users/annajungbluth/Desktop/git/hybridCT/data/training_data/MISR_40m_80x80km_10.5h_optical_thickness_toa.nc"
 ]
 
 
@@ -67,7 +67,8 @@ out_dir: "output/test_mimo_unet_n261/"
 output_dir: "output/test_mimo_unet_n261/"
 plot_dir: "output/test_mimo_unet_n261/"
 device: "cpu"
-model_dir: "artifacts/mimo_unet/n261/"
+# model_dir: "artifacts/mimo_unet/n261/"
+model_dir: "/Users/annajungbluth/Desktop/git/hybridCT/emulator/mimo/artifacts/mimo_unet/n261/"
 checkpoint_path: "output/test_mimo_unet_n261/"
 model_checkpoint_paths: ["artifacts/mimo_unet/n261/cloud_unet.ckpt"]
 state_dict: "cloud_unet.ckpt"

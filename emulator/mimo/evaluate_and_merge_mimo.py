@@ -231,16 +231,27 @@ if __name__ == '__main__':
                     f"config/{time:.0f}h/config_705_mimo_single_angle_evaluate.yaml",
                 ]
     elif resolution == 40:
+        # configs = [
+        #             f"config/{time:.0f}h/config_nadir_mimo_single_angle_evaluate_40m.yaml",
+        #             f"config/{time:.0f}h/config_n261_mimo_single_angle_evaluate_40m.yaml",
+        #             f"config/{time:.0f}h/config_261_mimo_single_angle_evaluate_40m.yaml",
+        #             f"config/{time:.0f}h/config_n456_mimo_single_angle_evaluate_40m.yaml",
+        #             f"config/{time:.0f}h/config_456_mimo_single_angle_evaluate_40m.yaml",
+        #             f"config/{time:.0f}h/config_n60_mimo_single_angle_evaluate_40m.yaml",
+        #             f"config/{time:.0f}h/config_60_mimo_single_angle_evaluate_40m.yaml",
+        #             f"config/{time:.0f}h/config_n705_mimo_single_angle_evaluate_40m.yaml",
+        #             f"config/{time:.0f}h/config_705_mimo_single_angle_evaluate_40m.yaml",
+        #         ]
         configs = [
-                    f"config/{time:.0f}h/config_nadir_mimo_single_angle_evaluate_40m.yaml",
-                    f"config/{time:.0f}h/config_n261_mimo_single_angle_evaluate_40m.yaml",
-                    f"config/{time:.0f}h/config_261_mimo_single_angle_evaluate_40m.yaml",
-                    f"config/{time:.0f}h/config_n456_mimo_single_angle_evaluate_40m.yaml",
-                    f"config/{time:.0f}h/config_456_mimo_single_angle_evaluate_40m.yaml",
-                    f"config/{time:.0f}h/config_n60_mimo_single_angle_evaluate_40m.yaml",
-                    f"config/{time:.0f}h/config_60_mimo_single_angle_evaluate_40m.yaml",
-                    f"config/{time:.0f}h/config_n705_mimo_single_angle_evaluate_40m.yaml",
-                    f"config/{time:.0f}h/config_705_mimo_single_angle_evaluate_40m.yaml",
+                    f"config/{time:.0f}h/config_nadir_mimo_single_angle_evaluate.yaml",
+                    f"config/{time:.0f}h/config_n261_mimo_single_angle_evaluate.yaml",
+                    f"config/{time:.0f}h/config_261_mimo_single_angle_evaluate.yaml",
+                    f"config/{time:.0f}h/config_n456_mimo_single_angle_evaluate.yaml",
+                    f"config/{time:.0f}h/config_456_mimo_single_angle_evaluate.yaml",
+                    f"config/{time:.0f}h/config_n60_mimo_single_angle_evaluate.yaml",
+                    f"config/{time:.0f}h/config_60_mimo_single_angle_evaluate.yaml",
+                    f"config/{time:.0f}h/config_n705_mimo_single_angle_evaluate.yaml",
+                    f"config/{time:.0f}h/config_705_mimo_single_angle_evaluate.yaml",
                 ]
     else:
         print("only 40 and 280 m implemented")
@@ -250,7 +261,8 @@ if __name__ == '__main__':
     epis = []
     vza = []
     for config_fname in configs:
-        config = read_yaml(config_fname)
+        # config = read_yaml(config_fname)
+        config = read_yaml(os.path.join('/Users/annajungbluth/Desktop/git/hybridCT/emulator/mimo', config_fname))
         y_hat_map, epis_uncert, alea_uncert, scene_shape = main(config)
         y_pred.append(y_hat_map)
         alea.append(alea_uncert)

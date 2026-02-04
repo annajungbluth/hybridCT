@@ -7,16 +7,16 @@ scheduler_step_size: 20
 scheduler_gamma: 0.5
 
 scenes: [
-  "../../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0.nc"
+  "/Users/annajungbluth/Desktop/git/hybridCT/data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0_toa.nc"
 ]
 
 input_fname: [
-  "../../data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0.nc"
-]
+  "/Users/annajungbluth/Desktop/git/hybridCT/data/training_data/MISR_40m_radiances_phi0_SZA40_RICO_10.5h_AOD0.1_WIND10.0_toa.nc"
+] # input data
 
 target_fname: [
-  "../../data/training_data/MISR_40m_80x80km_10.5h_optical_thickness.nc"
-]
+  "/Users/annajungbluth/Desktop/git/hybridCT/data/training_data/MISR_40m_80x80km_10.5h_optical_thickness_toa.nc"
+] # target data
 
 
 fill_value: -9.999e-9 
@@ -28,14 +28,14 @@ stratify_center_window_size: 10
 tau_min_threshold: 0.05
 cloudy_tile_percent_threshold: 0.8
 
-input_scaler: "MinMax"
-target_scaler: "MinMax"
+input_scaler: "MinMax" # scaler for normalization
+target_scaler: "MinMax" # scaler for normalization
 log_scale_input: False
 log_scale_target: False
 
 #cloud_height_avg: 1.55 # km
-dx: 0.04
-resolution: 0.28
+dx: 0.04 # grid spacing in km (40m)
+resolution: 0.28 # sensor resolution in km (280m)
 
 multiview: False
 angles: [60.0] #-70.5, -60.0, -45.6, -26.1, 0, 26.1, 45.6, 60.0, 70.5]
@@ -44,8 +44,8 @@ process_image: True
 grid_field: "y"
 vza_field: "vza"
 cloud_mask_field: "cloud_mask"
-input_field: "rad"
-target_field: "tau"
+input_field: "rad" # input variable name
+target_field: "tau" # target variable name
 stride: 2
 offset_x: 0
 offset_y: 0
@@ -67,12 +67,13 @@ out_dir: "output/test_mimo_unet_60/"
 output_dir: "output/test_mimo_unet_60/"
 plot_dir: "output/test_mimo_unet_60/"
 device: "cpu"
-model_dir: "artifacts/mimo_unet/60/"
+# model_dir: "artifacts/mimo_unet/60/"
+model_dir: "/Users/annajungbluth/Desktop/git/hybridCT/emulator/mimo/artifacts/mimo_unet/60/"
 checkpoint_path: "output/test_mimo_unet_60/"
 model_checkpoint_paths: ["artifacts/mimo_unet/60/cloud_unet.ckpt"]
 state_dict: "cloud_unet.ckpt"
 
-use_mimo: True
+use_mimo: True # use MIMO-UNet architecture
 mimo_num_subnetworks: 5
 mimo_filter_base_count: 64
 mimo_final_dropout_rate: 0.0
