@@ -1,6 +1,8 @@
+import pickle
 import os
 import argparse
 import matplotlib.pyplot as plt
+from networkx import volume
 from skimage import measure
 from scipy import stats
 import numpy as np
@@ -12,7 +14,8 @@ from viz_rec import scatter_density
 from datetime import datetime
 
 # NOTE: Check that this import works correctly
-from analyze_mystic_scene import get_beta_ext, coarsen_resolution, filter_labels, generate_cloud_file_dataset, generate_cloud_file_netcdf, compute_max_view_angle, save2netcdf
+from analyze_mystic_scene import get_beta_ext, filter_labels, generate_cloud_file_dataset
+from vipct_utils import generate_cloud_file_dataset_vipct, extract_viewing_angles, rectify_with_projection_matrix, create_aligned_views, coarsen_image_resolution, upsample_volume
 
 """
 analyze_les_scene.py
@@ -315,22 +318,25 @@ def plot_results(test_cloud_3d, reconstruction, error, yloc, offset_z, dx, save_
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default='hybridct', choices=['hybridct', 'vipct'],
+    parser.add_argument("--dataset", type=str, default='vipct', choices=['hybridct', 'vipct'],
                         help="Dataset to use: 'hybridct' or 'vipct'")
-    parser.add_argument("--scene", type=str, default="wc_les_RICO_40m_80kmx80km_T_qc_30.0h",
+    parser.add_argument("--scene", type=str, default='cloud_results_6032', # default="wc_les_RICO_40m_80kmx80km_T_qc_30.0h",
                         help="Name of the LES scene to analyze")
-    parser.add_argument("--data_path", type=str, default="../data/tomography/nasa-jpl/",
+    parser.add_argument("--data_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)', # default="../data/",
                         help="Path to the data directory")
     parser.add_argument("--hybridct_mode", choices=["predicted", "truth"],
                         default="truth", help="prediction mode")
-    parser.add_argument("--hybridct_cloudid", type=int, default=None,
+    parser.add_argument("--hybridct_cloudid", type=int, default=54,
                         help="Cloud ID to analyze in HybridCT dataset")
+    parser.add_argument("--vipct_mode", choices=["coarsen", "upsample"],
+                        default="upsample", help="resolution adjustment mode for VIPCT dataset")
     
     dataset = parser.parse_args().dataset
     scene = parser.parse_args().scene
     data_path = parser.parse_args().data_path
     mode = parser.parse_args().hybridct_mode
     cloud_id = parser.parse_args().hybridct_cloudid
+    vipct_mode = parser.parse_args().vipct_mode
 
     if dataset not in ['hybridct', 'vipct']:
         raise ValueError("Invalid dataset. Choose either 'hybridct' or 'vipct'.")
@@ -342,7 +348,57 @@ if __name__ == "__main__":
         os.makedirs(_save_dir)
     
     if dataset == 'vipct':
-        pass
+        
+        print("Using VIPCT dataset for tomographic reconstruction.")
+
+        img_dx = 0.02 # image resolution in [km]
+        vol_dx = 0.05 # volume resolution in [km]
+
+        # load MISR-like optical thickness field from emulator output
+        misr = xr.open_dataset(os.path.join(data_path, f"emulator/{scene}.nc")).tau
+
+        # adjust image resolution to match volume resolution
+        if vipct_mode == 'coarsen':
+            misr = coarsen_image_resolution(misr, res=img_dx, coarse_res=vol_dx)
+            print(f"Coarsening image data from {img_dx:.3f} km to {vol_dx:.3f} km resolution.")
+
+        # load VIPCT cloud volume
+        scene_path = os.path.join(data_path, f"test/{scene}.pkl")
+
+        with open(scene_path, 'rb') as f:
+            data_dict = pickle.load(f)
+            # generate cloud dataset from the VIPCT data
+            # pad to account for the difference to the images
+            total_pad = 15 # pad by 15 pixels to account for size difference between (coarsened) images and (upsampled) volume
+            ext_ = generate_cloud_file_dataset_vipct(data_dict, total_pad=total_pad, flip_y=False, flip_xy=True) 
+            # adjust volume resolution to match image resolution
+            if vipct_mode == 'upsample':
+                ext_ = upsample_volume(ext_, new_res=img_dx)
+                print(f"Upsampling volume data from {vol_dx:.3f} to {img_dx:.3f} km resolution.")
+
+        # create 2D cloud mask
+        binary_image = get_cloud_mask(ext_.ext, threshold=0.2)
+
+        save_dir = os.path.join(_save_dir, f"{scene}")
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        # extract cloud properties
+        cloud_dict = get_cloud_properties(ext_.ext)
+
+        vzas = [extract_viewing_angles(data_dict, i)[0] for i in range(data_dict['images'].shape[0])]
+        azimuths = [extract_viewing_angles(data_dict, i)[1] for i in range(data_dict['images'].shape[0])]
+        vzas_signed = [extract_viewing_angles(data_dict, i)[2] for i in range(data_dict['images'].shape[0])]
+        angles = np.round(vzas_signed, 2).tolist()
+
+        # extract multiangle views from MISR-like projections
+        multiangle_views = create_aligned_views(images=misr.transpose('vza', 'x', 'y'), data_dict=data_dict, cloud_height=cloud_dict['height'], padding_factor=1.5)
+
+        # TODO:x
+        # x Double check the coarsening & padding. I am not convinced that they images align
+        # x Creating the sinogram also looks wrong. The clouds move around a lot
+        # - Continue implementing the reconstruction and plotting
+        # - Check the padding of the sinogram
 
     elif dataset == 'hybridct':
 
@@ -388,6 +444,8 @@ if __name__ == "__main__":
         # select the cloud to analyze
         if cloud_id is None:
             cloud_id = np.random.choice(range(1, len(props)+1)) # randomly select a cloud ID to analyze
+
+        print(f"Analyzing cloud ID: {cloud_id}")
 
         # extract region and slice for the selected cloud
         region = props[cloud_id]

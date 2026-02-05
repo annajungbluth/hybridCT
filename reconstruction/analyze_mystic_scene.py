@@ -129,7 +129,7 @@ def generate_cloud_file_dataset(lwc_, reff_, z, dx, pad=0):
 
     Pads the input arrays and builds coordinate arrays for x, y, z.
     """
-    nx, ny, nz = lwc_.shape
+    nx, ny, nz = lwc_.shape # NOTE: double check order, as input is (ny, nx, nz)
 
     # add padding
     lwc = np.zeros((nx+2*pad, ny+2*pad, nz)) # padded LWC array
