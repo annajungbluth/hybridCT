@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
-def generate_cloud_file_dataset_vipct(data_dict, total_pad=0, flip_y=False, flip_xy=False):
+def generate_cloud_file_dataset_vipct(data_dict, total_pad=0, flip_x=False, flip_y=False, flip_xy=False):
     """
     Function to generate cloud file dataset from VIPCT data.
     Parameters:
@@ -12,17 +12,24 @@ def generate_cloud_file_dataset_vipct(data_dict, total_pad=0, flip_y=False, flip
         Grid spacing in km.
     total_pad: int
         Number of pixels to add around the data.
+    flip_x: bool
+        Whether to flip the x-axis of the extinction data.
+    flip_y: bool
+        Whether to flip the y-axis of the extinction data.
+    flip_xy: bool
+        Whether to swap the x and y axes of the extinction data.
     Returns:
     xarray.Dataset
         Dataset containing cloud extinction and grid information.
     """
     ext_ = data_dict['ext']
 
-    if flip_y:
+    if flip_x:
         ext_ = ext_[::-1, :, :]
-
+    if flip_y:
+        ext_ = ext_[:, ::-1, :]
     if flip_xy:
-        ext_ = ext_.transpose(1, 0, 2)
+        ext_ = ext_.transpose(1, 0, 2) # swap x and y axes
 
     nx, ny, nz = ext_.shape
 
@@ -36,21 +43,19 @@ def generate_cloud_file_dataset_vipct(data_dict, total_pad=0, flip_y=False, flip
     pad_l = np.floor(total_pad/2).astype(int)
     pad_r = np.ceil(total_pad/2).astype(int)
 
-    slx = slice(pad_l, nx+pad_r-1) # slice for x dimension with padding
-    sly = slice(pad_l, ny+pad_r-1) # slice for y dimension with padding
+    slx = slice(pad_l, pad_l+nx) # slice for x dimension with padding
+    sly = slice(pad_l, pad_l+ny) # slice for y dimension with padding
 
     ext[slx,sly,:] = ext_.data # insert original extinction data
 
-    nx, ny, nz = ext.shape
-
-    x = np.arange(0, nx*dx, dx)
-    y = np.arange(0, ny*dy, dy)
+    x = np.concatenate((np.arange(-pad_l*dx, 0, dx), np.arange(0, nx*dx, dx), np.arange(nx*dx, (nx+pad_r)*dx, dx))) # define x-coordinates with padding
+    y = np.concatenate((np.arange(-pad_l*dy, 0, dy), np.arange(0, ny*dy, dy), np.arange(ny*dy, (ny+pad_r)*dy, dy))) # define y-coordinates with padding
     z = data_dict['grid'][2][:nz] # define z-coordinates
 
     ds = xr.Dataset({
         "ext": xr.DataArray(ext, dims=["x", "y", "z"], coords=[x, y, z]),
         "delx": dx,
-        "dely": dx,
+        "dely": dy,
         "delz": dz,
         })
     
@@ -144,7 +149,7 @@ def rectify_with_projection_matrix(image, P, cloud_height, output_shape,
     
     return rectified
 
-def create_aligned_views(images, data_dict, cloud_height, output_shape=None, padding_factor=1.5, resolution=0.02):
+def create_aligned_views(images, data_dict, cloud_height, output_shape=None, padding_factor=1, resolution=0.02):
     """Create parallax-corrected views using projection matrices."""
     
     n_cams = images.shape[0]
@@ -178,8 +183,13 @@ def create_aligned_views(images, data_dict, cloud_height, output_shape=None, pad
             y_range=y_range
         )
         aligned_views.append(rectified)
-    
-    return np.stack(aligned_views, axis=0)
+
+    # Stack aligned views into a multi-angle tile
+    multi_angle_tile = np.stack(aligned_views, axis=-1) # shape (H, W, n_cams)
+
+    sinogram = xr.DataArray(dims=["x","y","angles"], data=multi_angle_tile, coords={"x": images.x.values, "y": images.y.values, "angles": images.vza.values})
+
+    return sinogram
 
 def coarsen_image_resolution(dataset, res, coarse_res):
     """Return coarsened dataset based on original resolution `res`
@@ -198,11 +208,12 @@ def coarsen_image_resolution(dataset, res, coarse_res):
 
 def upsample_volume(volume, new_res):
     """
-    Function to upsample volume.
+    Upsample volume using chunked interpolation to reduce memory usage.
     
     Args:
         volume: xarray Dataset with 'ext' variable
         new_res: target resolution in km
+        chunk_size: number of slices to process at once (reduce if still OOM)
     """
     x_grid = volume.x.data
     y_grid = volume.y.data
@@ -211,8 +222,8 @@ def upsample_volume(volume, new_res):
     original_coords = (x_grid, y_grid, z_grid)
     
     # Create new coordinate arrays
-    x_grid_new = np.arange(0, x_grid[-1], new_res)
-    y_grid_new = np.arange(0, y_grid[-1], new_res)
+    x_grid_new = np.arange(x_grid[0], x_grid[-1], new_res)
+    y_grid_new = np.arange(y_grid[0], y_grid[-1], new_res)
     
     nx_new = len(x_grid_new)
     ny_new = len(y_grid_new)

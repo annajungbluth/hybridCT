@@ -154,7 +154,9 @@ def generate_cloud_file_dataset(lwc_, reff_, z, dx, pad=0):
         "reff": xr.DataArray(reff, dims=["x", "y", "z"], coords=[x, y, z]),
         "delx": dx,
         "dely": dx,
+        "delz": z[1] - z[0] if len(z) > 1 else 0
         })
+    
     return ds # returns padded dataset
 
 def generate_cloud_file_netcdf(filename, lwc_, reff_, z, dx, pad=1):
