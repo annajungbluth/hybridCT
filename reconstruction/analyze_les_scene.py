@@ -12,11 +12,13 @@ import projection_utils as proj_utils
 from custom_sart import custom_radon, custom_radon_ray_sum, iradon_sart_custom
 from viz_rec import scatter_density
 from datetime import datetime
+from scipy.ndimage import binary_dilation
+from tqdm import tqdm
 import plotly.graph_objects as go
 
-# NOTE: Check that this import works correctly
 from analyze_mystic_scene import get_beta_ext, filter_labels, generate_cloud_file_dataset
 from vipct_utils import generate_cloud_file_dataset_vipct, extract_viewing_angles, rectify_with_projection_matrix, create_aligned_views, coarsen_image_resolution, upsample_volume
+from custom_sart import bilinear_ray_sum
 
 """
 analyze_les_scene.py
@@ -120,7 +122,7 @@ def get_cloud_properties(data, slx=None, sly=None, beta_ext=None):
 
     return cloud_dict
 
-def get_test_cloud(cloud_dict, dx, dz):
+def get_test_cloud(cloud_dict, dx, dz, shift=True):
     """
     Function to extract and pad the test cloud volume from cloud dictionary
     Parameters:
@@ -130,14 +132,17 @@ def get_test_cloud(cloud_dict, dx, dz):
         Spatial resolution in x-direction [km]
     dz : float
         Spatial resolution in z-direction [km]
+    shift : bool
+        Whether to shift the cloud in z to center around the center of mass before padding
 
     Returns:
     test_cloud : xarray.DataArray
         Padded 3D cloud extinction data array
     """
     test_cloud = cloud_dict['cloud_ext']
-    pixel_offset_z = int(len(test_cloud.z.data)//2 - np.argmin(abs(test_cloud.z.data - cloud_dict['center_of_mass']))) # shift cloud in z to center around COM
-    test_cloud = test_cloud.shift(z=pixel_offset_z, fill_value=0) # shift cloud in z to center around COM
+    if shift: # NOTE: This only shifts the cloud and does not correct the z-coordinates
+        pixel_offset_z = int(len(test_cloud.z.data)//2 - np.argmin(abs(test_cloud.z.data - cloud_dict['center_of_mass']))) # shift cloud in z to center around COM
+        test_cloud = test_cloud.shift(z=pixel_offset_z, fill_value=0) # shift cloud in z to center around COM
 
     nx, ny, nz = test_cloud.shape
     nx_new = ny_new = nz_new = max(nx, ny, nz) # new size to pad to (make cube), e.g. (23, 37, 66) -> (66, 66, 66)
@@ -196,6 +201,7 @@ def get_padded_sinogram(sinogram, test_cloud, test_cloud_padded, angles, dx):
 
     # pad sinogram projections to match reconstruction size
     sinogram_padded = sinogram.pad({"x": pad_x, "z":pad_z}, constant_values=0) # pad in x and z with zeros, new shape should be (66, 37, 9)
+
     new_coords = np.concatenate([
         test_cloud.x.data[0] + np.arange(-pad_x[0], 0) * dx,  # Before padding
         test_cloud.x.data,                                      # Original coordinates
@@ -206,7 +212,7 @@ def get_padded_sinogram(sinogram, test_cloud, test_cloud_padded, angles, dx):
 
     return sinogram_padded, offset_z
 
-def get_sart_reconstruction(sinogram_padded, test_cloud_padded, angles, dx, niter=200):
+def get_sart_reconstruction(sinogram_padded, test_cloud_padded, angles, dx, niter=100):
     """
     Wrapper function to perform SART reconstruction on padded sinogram data
     Parameters:
@@ -229,17 +235,21 @@ def get_sart_reconstruction(sinogram_padded, test_cloud_padded, angles, dx, nite
 
     reconstruction = np.zeros_like(test_cloud_data) # array to hold reconstructed data
 
-    for y in range(sinogram_padded.shape[1]): # iterate over each projection, i.e. each y-location
+    for y in tqdm(range(sinogram_padded.shape[1])): # iterate over each projection, i.e. each y-location
+        
         mask = test_cloud_data[:,y] == 0 # shape = (66, 66), i.e. (nz, nx), mask of where the true extinction is zero
         prior = np.zeros_like(test_cloud_data[:,y]) # initial prior for SART reconstruction, shape = (66, 66) of zeroes
         for iiter in range(niter):
             sl_rec = iradon_sart_custom(sinogram_padded.data[:,y,:], theta=angles, image=prior, resolution=dx)
+            
             # apply cloud mask
             sl_rec[mask] = 0 # this mask comes from the ground truth extinction field and would not be available in practice
+            
             # clip negative results to zerotes
             sl_rec[sl_rec<0] = 0
             # use current estimate as prior
             prior = sl_rec
+    
         reconstruction[:,y,:] = sl_rec
 
     return reconstruction
@@ -286,14 +296,14 @@ def plot_results(test_cloud_3d, reconstruction, error, yloc, offset_z, dx, save_
         fig, ax = plt.subplots(1, 3, figsize=(6, 3), dpi=200, sharex=True, sharey=True, constrained_layout=True)
         ax[0].set_title("Truth")
         im0 = ax[0].pcolormesh(zgrid, xgrid, np.ma.masked_array(true_slice, ~mask_slice), cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.colorbar(im0, ax=ax[0], shrink=0.8)
+        plt.colorbar(im0, ax=ax[0], shrink=0.45)
         ax[1].set_title("Reconstruction")
         im1 = ax[1].pcolormesh(zgrid, xgrid, np.ma.masked_array(pred_slice, ~mask_slice), cmap=cmap, vmin=vmin, vmax=vmax)
-        plt.colorbar(im1, ax=ax[1], shrink=0.8)
+        plt.colorbar(im1, ax=ax[1], shrink=0.45)
         ax[2].set_title("Reconstruction Error")
         im2 = ax[2].pcolormesh(zgrid, xgrid, np.ma.masked_array(error_slice, ~mask_slice), cmap="RdBu_r", vmin=-vlim, vmax=vlim)
         ax[2].contour(zgrid, xgrid, ~mask_slice, levels=[0], colors="k", linewidths=1)
-        cbar = plt.colorbar(im2, ax=ax[2], shrink=0.8)
+        cbar = plt.colorbar(im2, ax=ax[2], shrink=0.45)
         cbar.set_label(r"[km$^{-1}$]")
         rmse = np.sqrt(np.nanmean((pred_slice - true_slice)**2))
         plt.suptitle(f"Reconstruction, RMSE={rmse:.2f}"+r" km$^{-1}$"+f", yloc={yloc}")
@@ -361,11 +371,33 @@ def plot_results_3d(ds_rec, save_dir):
 
         fig.write_html(os.path.join(save_dir, f"predictions_{variable}.html"))
 
+def plot_results_projection(sinogram_padded, test_cloud_3d, angles, dx, yloc, save_dir):
+    
+    plt.figure(figsize=(12, 4))
+
+    plt.subplot(131)
+    plt.imshow(custom_radon_ray_sum(test_cloud_3d[:,yloc,:], angles, dx), aspect='auto')
+    plt.colorbar(label=r"Optical Thickness [km$^{-1}$]")
+    plt.title('Forward projection from truth')
+
+    plt.subplot(132)
+    plt.imshow(sinogram_padded.data[:, yloc, :], aspect='auto')
+    plt.colorbar(label=r"Optical Thickness [km$^{-1}$]")
+    plt.title('Input sinogram')
+
+    plt.subplot(133)
+    plt.imshow(custom_radon_ray_sum(test_cloud_3d[:,yloc,:], angles, dx) - sinogram_padded.data[:, yloc, :], aspect='auto')
+    plt.colorbar(label=r"Optical Thickness [km$^{-1}$]")
+    plt.title('Difference')
+    
+    plt.savefig(os.path.join(save_dir, 'forward_projection_check.png'))
+
 def main(args):
     
     dataset = args.dataset
     scene = args.scene
     data_path = args.data_path
+    volume_path = args.volume_path
     mode = args.mode
     cloud_id = args.hybridct_cloudid
     vipct_mode = args.vipct_mode
@@ -389,13 +421,27 @@ def main(args):
             tag = "_predCOT"
             print("Tomographic cloud reconstruction using predicted optical thickness field.")
             # load MISR-like optical thickness field from emulator output
-            misr = xr.open_dataset(os.path.join(data_path, f"emulator/{scene}.nc")).tau
+            rectify = True
 
-        elif mode == "truth": # use ground-truth optical thickness field
-            tag = "_trueCOT"
-            print("Tomographic cloud reconstruction using ground-truth optical thickness field.")
+        elif mode == "projection": # use projection of the ground-truth cloud as input
+            tag = "_projCOT"
+            print("Tomographic cloud reconstruction using volume projection of ground-truth optical thickness field.")
             # load MISR-like optical thickness field from rendering output
-            misr = xr.open_dataset(os.path.join(data_path, f"renderer/{scene}.nc")).tau
+            rectify = True
+
+        elif mode == "bilinear-ray-sum": # use bilinear ray sum projection of the ground-truth cloud as input
+            tag = "_brsCOT"
+            print("Tomographic cloud reconstruction using bilinear ray sum projection of ground-truth optical thickness field.")
+            # load MISR-like optical thickness field from rendering output
+            rectify = False
+
+        elif mode == "parallel-ray": # use parallel beam projection of the ground-truth cloud as input
+            tag = "_prsCOT"
+            print("Tomographic cloud reconstruction using parallel-beam projection of ground-truth optical thickness field.")
+            # load MISR-like optical thickness field from rendering output
+            rectify = True
+
+        misr = xr.open_dataset(os.path.join(data_path, f"{scene}.nc")).tau
 
         # adjust image resolution to match volume resolution
         if vipct_mode == 'coarsen':
@@ -403,16 +449,23 @@ def main(args):
             print(f"Coarsening image data from {img_dx:.3f} km to {vol_dx:.3f} km resolution.")
 
         H, W, n_views = misr.shape
-        # load VIPCT cloud volume
-        scene_path = os.path.join(data_path, f"test/{scene}.pkl")
 
+        # load VIPCT cloud volume
+        scene_path = os.path.join(volume_path, f"{scene}.pkl")
         with open(scene_path, 'rb') as f:
             data_dict = pickle.load(f)
             # generate cloud dataset from the VIPCT data
             # pad to account for the difference to the images
-            total_pad = 15 if H>32 else 0 # pad by 15 pixels to account for size difference between images and volume
+            total_pad = 15 if W>32 else 0 # pad by 15 pixels to account for size difference between images and volume
             # flipping the x and y axes is needed because when the multiangle_views are generated, the x and y axes are swapped.
-            ext_ = generate_cloud_file_dataset_vipct(data_dict, total_pad=total_pad, flip_x=True, flip_y=True, flip_xy=False) 
+            ext_ = generate_cloud_file_dataset_vipct(
+                data_dict=data_dict, 
+                total_pad=total_pad, 
+                flip_x=False, 
+                flip_y=False, 
+                flip_z=False, 
+                flip_xy=False
+                ) 
             # adjust volume resolution to match image resolution
             if vipct_mode == 'upsample':
                 ext_ = upsample_volume(ext_, new_res=img_dx)
@@ -426,22 +479,34 @@ def main(args):
 
         # extract cloud properties
         cloud_dict = get_cloud_properties(ext_.ext)
-
-        vzas = [extract_viewing_angles(data_dict, i)[0] for i in range(data_dict['images'].shape[0])]
-        azimuths = [extract_viewing_angles(data_dict, i)[1] for i in range(data_dict['images'].shape[0])]
-        vzas_signed = [extract_viewing_angles(data_dict, i)[2] for i in range(data_dict['images'].shape[0])]
+        cloud_COM = cloud_dict['center_of_mass']
 
         angles = misr.vza.data # view angles from VIPCT geometry, should be shape (n_views,)
+ 
+        # TODO: Test whether this is important for the VIPCT reconstruction
+        shift = True # if True, shifts the volume to center of mass
 
         # extract multiangle views from MISR-like projections
-        multiangle_views = create_aligned_views(images=misr.transpose('vza', 'y', 'x'), data_dict=data_dict, cloud_height=cloud_dict['height'], padding_factor=1)
+        if rectify:
+            sinogram = create_aligned_views(misr, data_dict, cloud_COM, mode)
+        else:
+            sinogram = misr.transpose('x', 'y', 'vza') # shape (nx, ny, n_angles)
+            # rename angle dimension to 'angles' for consistency
+            sinogram = sinogram.rename({'vza': 'angles'})
+
+        for i in range(sinogram.shape[2]):
+            plt.figure()
+            plt.imshow(sinogram[:,:,i], aspect='auto')
+            plt.colorbar()
+            plt.title(f"Sinogram view {i}, angle={angles[i]:.1f} deg")
+            plt.savefig(os.path.join(save_dir, f"sinogram_view_{i:03d}.png"))
+            plt.close()
 
     elif dataset == 'hybridct':
 
         print("Using HybridCT dataset for tomographic reconstruction.")
 
         time = float(scene.split("_")[-1].replace("h","")) # extract time from scene name
-        scene_path = os.path.join(data_path, f"ground_truth/{scene}.nc")
 
         # Select input mode: ML-predicted COT, ground-truth COT, or isolated-cloud tests
         if mode == "predicted": # use ML-predicted optical thickness field
@@ -454,6 +519,8 @@ def main(args):
             print("Tomographic cloud reconstruction using ground-truth optical thickness field.")
             misr = xr.open_dataset(os.path.join(data_path, f"ground_truth/MISR_40m_80x80km_{time:.1f}h_optical_thickness_toa.nc")).tau
 
+        # load HybridCT cloud volume
+        scene_path = os.path.join(volume_path, f"ground_truth/{scene}.nc")
         with xr.open_dataset(scene_path) as les_: # load the ground truth LES cloud volume
             les = generate_cloud_file_dataset(les_.lwc.transpose("ny", "nx", "nz"), 10, les_.z, les_.dx, pad=0) # generate cloud dataset from the LES data
             lwc = les.lwc
@@ -500,6 +567,11 @@ def main(args):
 
         angles = np.sort(misr.vza.data) # view angles from MISR-like geometry
 
+        shift = True # if True, shifts the volume to center of mass
+        # in the creation of the sinograms, the images are also corrected
+        # for the volumes, the shift is in z
+        # for the images, the shift is in x
+
         # extract multiangle views from MISR-like projections
         multiangle_views = proj_utils.generate_views(
             _data = misr,
@@ -510,32 +582,21 @@ def main(args):
             angles = angles,
             offset = [-0.05, -0.04, -0.03, -0.01, 0, 0, 0, 0, 0]
         )
+        sinogram = multiangle_views[:,:,::-1] # multi_angle_views are shape (nx, ny, n_angles), reverse angle axis
 
     # get padded cloud data for reconstruction
-    test_cloud, test_cloud_padded = get_test_cloud(cloud_dict, dx=dx, dz=dz) # padded test cloud volume, shape (nx_new, ny_new, nz_new)
+    test_cloud, test_cloud_padded = get_test_cloud(cloud_dict, dx=dx, dz=dz, shift=shift) # padded test cloud volume, shape (nx_new, ny_new, nz_new)
     test_cloud_3d = test_cloud_padded.data.T # ground truth data for reconstruction, shape (nz_new, ny_new, nx_new)
 
     # get (padded) sinogram 
-    sinogram = multiangle_views[:,:,::-1] # multi_angle_views are shape (nx, ny, n_angles), reverse angle axis
     sinogram_padded, offset_z = get_padded_sinogram(sinogram, test_cloud, test_cloud_padded, angles, dx) # pad sinogram to match reconstruction size
 
     reconstruction = get_sart_reconstruction(sinogram_padded, test_cloud_padded, angles, dx)
+
     error = reconstruction - test_cloud_3d # compute reconstruction error
 
-    # yloc = len(test_cloud_padded.y.data) // 2 # select y-location for plotting (middle of the volume)
     yloc = len(test_cloud_padded.y.data) // 2 # select y-location for plotting (middle of the volume)
-
-    # plot reconstruction results
-    plot_results(
-        test_cloud_3d = test_cloud_3d,
-        reconstruction = reconstruction,
-        error = error,
-        yloc = yloc,
-        offset_z = offset_z,
-        dx = dx,
-        save_dir = save_dir,
-        tag = tag
-    )
+    yloc = 4 # 27, 28, 
 
     # save reconstruction volume to netcdf
     ds_rec = xr.Dataset({
@@ -559,18 +620,34 @@ def main(args):
     ds_rec.to_netcdf(os.path.join(save_dir, f"reconstruction_{scene}.nc"))
     print(f"Saved reconstruction results to {os.path.join(save_dir, f'reconstruction_{scene}.nc')}")
 
+    # plot reconstruction results
+    plot_results(
+        test_cloud_3d = test_cloud_3d,
+        reconstruction = reconstruction,
+        error = error,
+        yloc = yloc,
+        offset_z = offset_z,
+        dx = dx,
+        save_dir = save_dir,
+        tag = tag
+    )
+
     # save 3D html file
     plot_results_3d(ds_rec, save_dir)
 
+    # save sinogram plots
+    plot_results_projection(sinogram_padded, test_cloud_3d, angles, dx, yloc, save_dir)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # parser.add_argument("--dataset", type=str, default='hybridct', choices=['hybridct', 'vipct'],
     #                     help="Dataset to use: 'hybridct' or 'vipct'")
-    # parser.add_argument("--scene", type=str, default="wc_les_RICO_40m_80kmx80km_T_qc_30.0h", # default='cloud_results_6032'
+    # parser.add_argument("--scene", type=str, default="wc_les_RICO_40m_80kmx80km_T_qc_30.0h",
     #                     help="Name of the LES scene to analyze")
-    # parser.add_argument("--data_path", type=str, default="/Users/annajungbluth/Desktop/data/tomography/nasa-jpl/", # default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)'
+    # parser.add_argument("--data_path", type=str, default="/Users/annajungbluth/Desktop/data/tomography/nasa-jpl/", 
     #                     help="Path to the data directory")
+    # parser.add_argument("--volume_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/nasa-jpl/',
+    #                     help="Path to the volume data directory")
     # parser.add_argument("--mode", choices=["predicted", "truth"],
     #                     default="truth", help="prediction mode")
     # # HybridCT-specific arguments
@@ -584,10 +661,12 @@ if __name__ == "__main__":
                         help="Dataset to use: 'hybridct' or 'vipct'")
     parser.add_argument("--scene", type=str, default='cloud_results_6032',
                         help="Name of the LES scene to analyze")
-    parser.add_argument("--data_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)',
-                        help="Path to the data directory")
-    parser.add_argument("--mode", choices=["predicted", "truth"],
-                        default="truth", help="prediction mode")
+    parser.add_argument("--data_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/renderer-parallel-ray',
+                        help="Path to the image data directory")
+    parser.add_argument("--volume_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/test',
+                        help="Path to the volume data directory")
+    parser.add_argument("--mode", choices=["predicted", "projection", "bilinear-ray-sum", "parallel-ray"],
+                        default="parallel-ray", help="prediction mode")
     # HybridCT-specific arguments
     parser.add_argument("--hybridct_cloudid", type=int, default=54,
                         help="Cloud ID to analyze in HybridCT dataset")
@@ -602,6 +681,12 @@ if __name__ == "__main__":
     # x Double check the coarsening & padding. I am not convinced that they images align
     # x Creating the sinogram also looks wrong. The clouds move around a lot
     # x Check the padding of the sinogram
-    # - Debug implementing the reconstruction and plotting
+    # - Compare the volume projection, bilinear ray sum, and parallel ray approach
+        # - test volume projection approach
+        # x test bilinear ray sum approach
+        # - test parallel ray sum approach --> these results could still be improved
+            # - test whether the images and cloud volumes are aligned
+
     # - Check that I didn't break anything for the HybridCT case while implementing the VIPCT case
+    # - Check how often we are using "ground truth" values (e.g. cloud height)
 
