@@ -1,5 +1,6 @@
 import numpy as np
 import xarray as xr
+from scipy.ndimage import shift
 from scipy.interpolate import RegularGridInterpolator
 
 def generate_cloud_file_dataset_vipct(data_dict, total_pad=0, flip_x=False, flip_y=False, flip_z = False, flip_xy=False):
@@ -113,9 +114,10 @@ def coarsen_image_resolution(dataset, res, coarse_res):
     coarse = dataset.interp(x=new_x, y=new_y, method='cubic')
     return coarse
 
-def upsample_volume(volume, new_res):
+def resample_volume(volume, new_res):
     """
-    Upsample volume using chunked interpolation to reduce memory usage.
+    Resample volume to new resolution.
+    Make volume isotropic if not already.
     
     Args:
         volume: xarray Dataset with 'ext' variable
@@ -129,25 +131,26 @@ def upsample_volume(volume, new_res):
     original_coords = (x_grid, y_grid, z_grid)
     
     # Create new coordinate arrays
-    x_grid_new = np.arange(x_grid[0], x_grid[-1], new_res)
-    y_grid_new = np.arange(y_grid[0], y_grid[-1], new_res)
+    x_grid_new = np.round(np.arange(x_grid[0], x_grid[-1]+new_res, new_res), 2) # add buffer to include last point due to rounding
+    y_grid_new = np.round(np.arange(y_grid[0], y_grid[-1]+new_res, new_res), 2) # add buffer to include last point due to rounding
+    z_grid_new = np.round(np.arange(z_grid[0], z_grid[-1], new_res), 2) # no buffer added to avoid overstooting
     
     nx_new = len(x_grid_new)
     ny_new = len(y_grid_new)
-    nz = len(z_grid)
+    nz_new = len(z_grid_new)
     
     # Pre-allocate output array
-    upsampled_volume = np.zeros((nx_new, ny_new, nz))
+    upsampled_volume = np.zeros((nx_new, ny_new, nz_new))
     
     # Create interpolator once
     interp_func = RegularGridInterpolator(original_coords, volume.ext.data, 
                                           method='linear')
     
     # Process in z-slices or xy-chunks
-    for z_idx in range(nz):
+    for z_idx in range(nz_new):
         # Create 2D meshgrid for this z-slice only
         X_slice, Y_slice = np.meshgrid(x_grid_new, y_grid_new, indexing='ij')
-        Z_slice = np.full_like(X_slice, z_grid[z_idx])
+        Z_slice = np.full_like(X_slice, z_grid_new[z_idx])
         
         # Stack coordinates for this slice
         coords_slice = np.stack([X_slice.ravel(), Y_slice.ravel(), Z_slice.ravel()], axis=-1)
@@ -157,19 +160,37 @@ def upsample_volume(volume, new_res):
 
     scaling_factor = volume.ext.data.sum() / upsampled_volume.sum()
     upsampled_volume *= scaling_factor
+
+    if nx_new!=ny_new or nx_new!=nz_new:
+        print(f"Padding volume to isotropic shape.")
+        max_dim = max(nx_new, ny_new, nz_new)
+        pad_x = (max_dim - nx_new) // 2 # pad equally on both sides
+        pad_y = (max_dim - ny_new) // 2 # pad equally on both sides
+        pad_z = (max_dim - nz_new) # pad only the top
+        upsampled_volume = np.pad(upsampled_volume, ((pad_x, pad_x), (pad_y, pad_y), (0, pad_z)), mode='constant', constant_values=0)
+
+        if pad_x > 0:
+            x_grid_new = np.concatenate((np.arange(x_grid_new[0] - pad_x*new_res, x_grid_new[0], new_res), x_grid_new, np.arange(x_grid_new[-1]+new_res, x_grid_new[-1]+(pad_x)*new_res, new_res)))
+            x_grid_new = np.round(x_grid_new, 2) # round to 2 decimal places to avoid floating point issues
+        if pad_y > 0:
+            y_grid_new = np.concatenate((np.arange(y_grid_new[0] - pad_y*new_res, y_grid_new[0], new_res), y_grid_new, np.arange(y_grid_new[-1]+new_res, y_grid_new[-1]+(pad_y)*new_res, new_res)))
+            y_grid_new = np.round(y_grid_new, 2) # round to 2 decimal places to avoid floating point issues
+        if pad_z > 0:
+            z_grid_new = np.concatenate((z_grid_new, np.arange(z_grid_new[-1]+new_res, z_grid_new[-1]+(pad_z+1)*new_res, new_res)))
+            z_grid_new = np.round(z_grid_new, 2) # round to 2 decimal places to avoid floating point issues
     
     # Create output dataset
     upsampled_ds = xr.Dataset({
         "ext": xr.DataArray(upsampled_volume, dims=["x", "y", "z"], 
-                           coords=[x_grid_new, y_grid_new, z_grid]),
+                           coords=[x_grid_new, y_grid_new, z_grid_new]),
         "delx": new_res,
         "dely": new_res,
-        "delz": volume.delz,
+        "delz": new_res,
     })
     
     return upsampled_ds
 
-def create_aligned_views(da, data_dict, cloud_COM, mode):
+def create_aligned_views(da, data_dict, cloud_COM, mode, offset=None):
     """
     Function to correct images and create sinograms.
     Args:
@@ -182,15 +203,47 @@ def create_aligned_views(da, data_dict, cloud_COM, mode):
     """
     # Apply parallax correction and create sinogram based on camera projection
     if mode == 'prediction' or mode == 'projection':
-        sinograms = correct_projection(da=da, data_dict=data_dict, cloud_COM=cloud_COM, padding_factor=1)
+        sinogram = correct_projection(da=da, data_dict=data_dict, cloud_COM=cloud_COM, padding_factor=1, offset=offset)
+        sinogram = sinogram.transpose("y", "x", "angles") # ensure correct dimension order
     # Apply parallax and cosine corrections to parallel-beam rendered images
     elif mode == 'parallel-ray':
         x_grid = data_dict['grid'][0]
         angles = da.vza.data
-        sinogram = correct_parallel_rays(da=da, x_grid=x_grid, angles=angles, cloud_COM=cloud_COM)
+        sinogram = correct_parallel_rays(da=da, x_grid=x_grid, angles=angles, cloud_COM=cloud_COM, offset=offset)
     return sinogram
 
-def correct_projection(da, data_dict, cloud_COM, output_shape=None, padding_factor=1):
+def correct_offset(da, offset=None):
+    """
+    Apply a pixel offset to the input data array.
+    
+    Args:
+        da: xarray.DataArray with dimensions (x, y, angles)
+        offset: tuple of (x_offsets, y_offsets) for each view
+    
+    Returns:
+        Corrected xarray.DataArray with the same shape as input
+    """
+    dx = da.x.data[1] - da.x.data[0]  # original grid spacing
+
+    da_corrected = np.zeros_like(da.data)
+
+    if offset is None:
+        offset_x = [0] * len(da.angles.data)  # no additional shift by default
+        offset_y = [0] * len(da.angles.data)
+    else:
+        offset_x, offset_y = offset[0], offset[1]
+
+    for ivza, vza in enumerate(da.angles.data):
+        shift_x = offset_x[ivza] * dx
+        shift_y = offset_y[ivza] * dx
+        # shift the image by the specified offsets using nearest neighbor interpolation to avoid introducing new values
+        da_corrected[:, :, ivza] = shift(da.data[:, :, ivza], shift=(shift_y, shift_x), mode='nearest')
+
+    da_corrected = xr.DataArray(da_corrected, dims=da.dims, coords=da.coords)
+
+    return da_corrected
+
+def correct_projection(da, data_dict, cloud_COM, output_shape=None, padding_factor=1, offset=None):
     """Create parallax-corrected views using projection matrices."""
     
     n_cams = da.shape[-1]
@@ -229,6 +282,8 @@ def correct_projection(da, data_dict, cloud_COM, output_shape=None, padding_fact
     multi_angle_tile = np.stack(aligned_views, axis=-1) # shape (H, W, n_cams)
 
     sinogram = xr.DataArray(dims=["x","y","angles"], data=multi_angle_tile, coords={"x": da.x.values, "y": da.y.values, "angles": da.vza.values})
+
+    sinogram = correct_offset(sinogram, offset=offset)
 
     return sinogram
 
@@ -292,10 +347,20 @@ def rectify_with_projection_matrix(image, P, cloud_height, output_shape,
 
     return rectified
 
-def correct_parallel_rays(da, x_grid, angles, cloud_COM):
+def correct_parallel_rays(da, x_grid, angles, cloud_COM, offset=None):
     """
     Apply parallax and cosine corrections to parallel-beam rendered images.
-    
+
+    Args:
+        da (xarray.DataArray): Input data array with dimensions (x, y, vza).
+        x_grid (numpy.ndarray): 1D array of x-coordinates corresponding to the data array.
+        angles (numpy.ndarray): 1D array of viewing angles corresponding to the vza dimension of the data array.
+        cloud_COM (float): Height of the cloud center of mass in km.
+        offset (list of tuples, optional): List of (x_offset, y_offset) in pixels to apply additional shifts.
+
+    Returns:
+        xarray.DataArray: Corrected data array with dimensions (x, y, angles).
+        
     When rendering with shift_observer=True:
     - The ground grid is constant (same x-coordinates for all angles)
     - Clouds appear shifted due to parallax: shift = tan(vza) * cloud_height
@@ -303,26 +368,32 @@ def correct_parallel_rays(da, x_grid, angles, cloud_COM):
     
     This function undoes both effects to create ideal parallel-beam CT images.
     """
-    dx = x_grid[1] - x_grid[0]  # grid spacing in km
+
     xmin, xmax = x_grid[0], x_grid[-1]
     ymin, ymax = x_grid[0], x_grid[-1]
+
+    dx = x_grid[1] - x_grid[0]
 
     # Step 1: Parallax correction - shift images to align cloud positions
     da_corrected= correct_parallax(da, cloud_COM)
 
-    # Step 2: Crop padded images to original size
+    # Step 2: Correct for cosine projection
+    da_corrected = correct_cosine_projection(da_corrected, offset=offset)
+
+    # Step 3: Scale signal by cosine of viewing angle to correct for path length differences
+    # NOTE: The cosine projection should account for this?
+    # da_corrected = scale_path_length(da_corrected)
+
+    # Step 4: Crop padded images to original size
     da_corrected = crop_window(da_corrected, target_grid=((xmin, xmax+dx), (ymin, ymax+dx)))
 
-    # Step 3: Correct for cosine projection
-    da_corrected = correct_cosine_projection(da_corrected)
-
-    # Step 4: Scale signal by cosine of viewing angle to correct for path length differences
-    da_corrected = scale_path_length(da_corrected)
-
+    # Create sinogram dataarray
     sinogram_data = da_corrected.data
+
     sinogram = xr.DataArray(
         dims=["x","y","angles"], 
-        data=sinogram_data, coords={"x": da_corrected.x, "y": da_corrected.y, "angles": angles}
+        data=sinogram_data, 
+        coords={"x": x_grid, "y": da_corrected.y, "angles": angles}
         )
     
     return sinogram
@@ -380,13 +451,14 @@ def crop_window(da_shifted, target_grid):
     da_cropped = da_cropped.sel(x=slice(xmin, xmax), y=slice(ymin, ymax)) # crop to target grid
     return da_cropped
 
-def correct_cosine_projection(da, upsampling_factor=100):
+def correct_cosine_projection(da, offset=None, upsampling_factor=100):
     """
     Apply cosine projection correction to the data array.
     
     Args:
         da (xarray.DataArray): Input data array with dimensions (x, y, vza).
-        upsampling_factor (int): Factor by which to upsample the x grid for interpolation.
+        offset (float, optional): Optional x_offset (in pixels) to apply an additional shift to the images before corrections.
+        upsampling_factor (int, optional): Factor by which to upsample the x grid for interpolation.
     
     Returns:
         xarray.DataArray: Cosine-projected data array with the same dimensions as input.
@@ -394,6 +466,15 @@ def correct_cosine_projection(da, upsampling_factor=100):
     dx = da.x.data[1] - da.x.data[0]  # original grid spacing
 
     da_corrected = np.zeros_like(da.data)
+
+    if offset is None:
+        offset_x = [0] * len(da.vza.data)  # no additional shift by default
+        offset_y = [0] * len(da.vza.data)
+    else:
+        offset_x, offset_y = offset[0], offset[1]
+
+    offset_x_km = np.array(offset_x) * dx  # convert pixel offset to km
+    offset_y_km = np.array(offset_y) * dx  # convert pixel offset to km
 
     for ivza, vza in enumerate(da.vza.data):
         if vza == 0:
@@ -434,7 +515,7 @@ def correct_cosine_projection(da, upsampling_factor=100):
             view_adjusted = view_adjusted.assign_coords({"x": x_proj})
             
             # Interpolate back to original grid
-            view_final = view_adjusted.interp(x=da.x.data, kwargs={"fill_value": 0})
+            view_final = view_adjusted.interp(x=da.x.data + offset_x_km[ivza], y=da.y.data + offset_y_km[ivza], kwargs={"fill_value": 0})
             
             da_corrected[:, :, ivza] = view_final.data
 
@@ -459,5 +540,4 @@ def scale_path_length(da):
         else:
             cosine_factor = np.cos(np.deg2rad(angle))
             da_corrected[:, :, ivza] = da[:, :, ivza].data * cosine_factor
-
     return da_corrected

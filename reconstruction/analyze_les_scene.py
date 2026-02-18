@@ -17,7 +17,7 @@ from tqdm import tqdm
 import plotly.graph_objects as go
 
 from analyze_mystic_scene import get_beta_ext, filter_labels, generate_cloud_file_dataset
-from vipct_utils import generate_cloud_file_dataset_vipct, extract_viewing_angles, rectify_with_projection_matrix, create_aligned_views, coarsen_image_resolution, upsample_volume
+from vipct_utils import generate_cloud_file_dataset_vipct, extract_viewing_angles, rectify_with_projection_matrix, create_aligned_views, coarsen_image_resolution, resample_volume
 from custom_sart import bilinear_ray_sum
 
 """
@@ -293,7 +293,7 @@ def plot_results(test_cloud_3d, reconstruction, error, yloc, offset_z, dx, save_
         vlim = max(abs(vmin), abs(vmax))
 
         # plot results
-        fig, ax = plt.subplots(1, 3, figsize=(6, 3), dpi=200, sharex=True, sharey=True, constrained_layout=True)
+        fig, ax = plt.subplots(1, 3, figsize=(6, 2), dpi=200, sharex=True, sharey=True, constrained_layout=True)
         ax[0].set_title("Truth")
         im0 = ax[0].pcolormesh(zgrid, xgrid, np.ma.masked_array(true_slice, ~mask_slice), cmap=cmap, vmin=vmin, vmax=vmax)
         plt.colorbar(im0, ax=ax[0], shrink=0.45)
@@ -306,7 +306,7 @@ def plot_results(test_cloud_3d, reconstruction, error, yloc, offset_z, dx, save_
         cbar = plt.colorbar(im2, ax=ax[2], shrink=0.45)
         cbar.set_label(r"[km$^{-1}$]")
         rmse = np.sqrt(np.nanmean((pred_slice - true_slice)**2))
-        plt.suptitle(f"Reconstruction, RMSE={rmse:.2f}"+r" km$^{-1}$"+f", yloc={yloc}")
+        # plt.suptitle(f"Reconstruction, RMSE={rmse:.2f}"+r" km$^{-1}$"+f", yloc={yloc}")
         ax[0].set_ylabel("z [km]")
         for iax in range(3):
             ax[iax].set_xlabel("x [km]")
@@ -401,6 +401,7 @@ def main(args):
     mode = args.mode
     cloud_id = args.hybridct_cloudid
     vipct_mode = args.vipct_mode
+    vipct_shift = args.vipct_shift
 
     if dataset not in ['hybridct', 'vipct']:
         raise ValueError("Invalid dataset. Choose either 'hybridct' or 'vipct'.")
@@ -416,30 +417,62 @@ def main(args):
         img_dx = 0.02 # image resolution in [km]
         vol_dx = 0.05 # volume resolution in [km]
 
+        shift = vipct_shift
+ 
         # Select input mode: ML-predicted COT, ground-truth COT
         if mode == "predicted": # use ML-predicted optical thickness field
             tag = "_predCOT"
             print("Tomographic cloud reconstruction using predicted optical thickness field.")
             # load MISR-like optical thickness field from emulator output
             rectify = True
+            offset = None
 
         elif mode == "projection": # use projection of the ground-truth cloud as input
             tag = "_projCOT"
             print("Tomographic cloud reconstruction using volume projection of ground-truth optical thickness field.")
             # load MISR-like optical thickness field from rendering output
             rectify = True
+            if shift:
+                offset = (
+                    [-2, -2, -1, -1, 0, 1, 1, 2, 3, 4], # x-offset for each view
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) # no y-offset for each view
+            else:
+                offset = (
+                    [-4, -3, -2, -1, 0, 1, 2, 3, 4, 5], # x-offset for each view
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) # no y-offset for each view
 
         elif mode == "bilinear-ray-sum": # use bilinear ray sum projection of the ground-truth cloud as input
             tag = "_brsCOT"
             print("Tomographic cloud reconstruction using bilinear ray sum projection of ground-truth optical thickness field.")
             # load MISR-like optical thickness field from rendering output
             rectify = False
+            offset = None
 
         elif mode == "parallel-ray": # use parallel beam projection of the ground-truth cloud as input
             tag = "_prsCOT"
             print("Tomographic cloud reconstruction using parallel-beam projection of ground-truth optical thickness field.")
             # load MISR-like optical thickness field from rendering output
             rectify = True
+            if shift:
+                offset = (
+                    [-2, -2, -1, -1, -1, 0, 0, 1, 1, 1], # x-offset for each view
+                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) # no y-offset for each view
+                # offset = (
+                #     [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], # x-offset for each view
+                #     [-2, -2, -2, -2, -2, -1, -1, -1, 0, 0]) # y-offset for each view
+                # offset = (
+                #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # x-offset for each view
+                #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) # no y-offset for each view
+            else:
+                offset = (
+                     [-1, -1, -1, -1, -1, 0, 0, 0, 0, 0], # x-offset for each view
+                     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) # no y-offset for each view
+                # offset = (
+                #     [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], # x-offset for each view
+                #     [-3, -3, -2, -2, -2, -1, -1, 0, 0, 0]) # y-offset for each view
+                # offset = (
+                #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # x-offset for each view
+                #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) # no y-offset for each view
 
         misr = xr.open_dataset(os.path.join(data_path, f"{scene}.nc")).tau
 
@@ -466,13 +499,21 @@ def main(args):
                 flip_z=False, 
                 flip_xy=False
                 ) 
-            # adjust volume resolution to match image resolution
-            if vipct_mode == 'upsample':
-                ext_ = upsample_volume(ext_, new_res=img_dx)
-                print(f"Upsampling volume data from {vol_dx:.3f} to {img_dx:.3f} km resolution.")
-            # get volume resolution in [km]
-            dx = ext_.delx.data
-            dz = ext_.delz.data
+        # adjust volume resolution to match image resolution
+        if vipct_mode == 'upsample':
+            ext_ = resample_volume(ext_, new_res=img_dx)
+            print(f"Upsampling volume data from {vol_dx:.3f} to {img_dx:.3f} km resolution.")
+
+        # if the volume resolution is not isotropic, resample to isotropic resolution for reconstruction
+        dx = ext_.delx.data
+        dz = ext_.delz.data
+        if dx != dz:
+            print(f"Resampling volume dataset to isotropic resolution {max(dx, dz):.3f} km")
+            ext_ = resample_volume(ext_, new_res=max(dx, dz))
+
+        # get updated volume resolution after resampling
+        dx = ext_.delx.data
+        dz = ext_.delz.data
 
         # create 2D cloud mask
         binary_image = get_cloud_mask(ext_.ext, threshold=0.2)
@@ -482,13 +523,10 @@ def main(args):
         cloud_COM = cloud_dict['center_of_mass']
 
         angles = misr.vza.data # view angles from VIPCT geometry, should be shape (n_views,)
- 
-        # TODO: Test whether this is important for the VIPCT reconstruction
-        shift = True # if True, shifts the volume to center of mass
 
         # extract multiangle views from MISR-like projections
         if rectify:
-            sinogram = create_aligned_views(misr, data_dict, cloud_COM, mode)
+            sinogram = create_aligned_views(da=misr, data_dict=data_dict, cloud_COM=cloud_COM, mode=mode, offset=offset) # shape (nx, ny, n_angles)
         else:
             sinogram = misr.transpose('x', 'y', 'vza') # shape (nx, ny, n_angles)
             # rename angle dimension to 'angles' for consistency
@@ -496,9 +534,10 @@ def main(args):
 
         for i in range(sinogram.shape[2]):
             plt.figure()
-            plt.imshow(sinogram[:,:,i], aspect='auto')
+            plt.imshow(sinogram[:,:,i], aspect='auto', vmin=0, vmax=sinogram.max())
+            plt.text(23, 1.5, f"Sum: {sinogram[:,:,i].sum():.2f}", color='white', fontsize=8, bbox=dict(facecolor='black', alpha=0.5))
             plt.colorbar()
-            plt.title(f"Sinogram view {i}, angle={angles[i]:.1f} deg")
+            plt.title(f"Camera {i+1}")
             plt.savefig(os.path.join(save_dir, f"sinogram_view_{i:03d}.png"))
             plt.close()
 
@@ -507,6 +546,11 @@ def main(args):
         print("Using HybridCT dataset for tomographic reconstruction.")
 
         time = float(scene.split("_")[-1].replace("h","")) # extract time from scene name
+
+        shift = True # if True, shifts the volume to center of mass
+        # in the creation of the sinograms, the images are also corrected
+        # for the volumes, the shift is in z
+        # for the images, the shift is in x
 
         # Select input mode: ML-predicted COT, ground-truth COT, or isolated-cloud tests
         if mode == "predicted": # use ML-predicted optical thickness field
@@ -566,11 +610,6 @@ def main(args):
         cloud_COM = cloud_dict['center_of_mass'] - 120 # cloud center of mass height in [km]
 
         angles = np.sort(misr.vza.data) # view angles from MISR-like geometry
-
-        shift = True # if True, shifts the volume to center of mass
-        # in the creation of the sinograms, the images are also corrected
-        # for the volumes, the shift is in z
-        # for the images, the shift is in x
 
         # extract multiangle views from MISR-like projections
         multiangle_views = proj_utils.generate_views(
@@ -656,23 +695,25 @@ if __name__ == "__main__":
     # # VIPCT-specific arguments
     # parser.add_argument("--vipct_mode", choices=["coarsen", "upsample", "none"],
     #                     default="none", help="resolution adjustment mode for VIPCT dataset")
-    
+    # parser.add_argument("--vipct_shift", type=bool, default=True, help="Whether to shift the VIPCT cloud in z to center around the center of mass.")
+
     parser.add_argument("--dataset", type=str, default='vipct', choices=['hybridct', 'vipct'],
                         help="Dataset to use: 'hybridct' or 'vipct'")
     parser.add_argument("--scene", type=str, default='cloud_results_6032',
                         help="Name of the LES scene to analyze")
-    parser.add_argument("--data_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/renderer-parallel-ray',
+    parser.add_argument("--data_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/renderer-projection',
                         help="Path to the image data directory")
     parser.add_argument("--volume_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/test',
                         help="Path to the volume data directory")
     parser.add_argument("--mode", choices=["predicted", "projection", "bilinear-ray-sum", "parallel-ray"],
-                        default="parallel-ray", help="prediction mode")
+                        default="projection", help="prediction mode")
     # HybridCT-specific arguments
     parser.add_argument("--hybridct_cloudid", type=int, default=54,
                         help="Cloud ID to analyze in HybridCT dataset")
     # VIPCT-specific arguments
     parser.add_argument("--vipct_mode", choices=["coarsen", "upsample", "none"],
                         default="none", help="resolution adjustment mode for VIPCT dataset")
+    parser.add_argument("--vipct_shift", type=bool, default=True, help="Whether to shift the VIPCT cloud in z to center around the center of mass.")
     
     args = parser.parse_args()
     main(args)
@@ -685,7 +726,7 @@ if __name__ == "__main__":
         # - test volume projection approach
         # x test bilinear ray sum approach
         # - test parallel ray sum approach --> these results could still be improved
-            # - test whether the images and cloud volumes are aligned
+            # x test whether the images and cloud volumes are aligned
 
     # - Check that I didn't break anything for the HybridCT case while implementing the VIPCT case
     # - Check how often we are using "ground truth" values (e.g. cloud height)
