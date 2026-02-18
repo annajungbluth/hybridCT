@@ -717,17 +717,3 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     main(args)
-
-    # TODO:x
-    # x Double check the coarsening & padding. I am not convinced that they images align
-    # x Creating the sinogram also looks wrong. The clouds move around a lot
-    # x Check the padding of the sinogram
-    # - Compare the volume projection, bilinear ray sum, and parallel ray approach
-        # - test volume projection approach
-        # x test bilinear ray sum approach
-        # - test parallel ray sum approach --> these results could still be improved
-            # x test whether the images and cloud volumes are aligned
-
-    # - Check that I didn't break anything for the HybridCT case while implementing the VIPCT case
-    # - Check how often we are using "ground truth" values (e.g. cloud height)
-
