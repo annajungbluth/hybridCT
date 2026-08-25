@@ -283,8 +283,8 @@ def plot_results(test_cloud_3d, reconstruction, error, yloc, offset_z, dx, save_
 
         # get grid in [km]
         nx_sl, nz_sl = true_slice.shape
-        x_sl = np.arange(0, nx_sl*dx, dx)
-        z_sl = np.arange(0, nz_sl*dx, dx)
+        x_sl = np.arange(0, (nx_sl-0.5)*dx, dx)
+        z_sl = np.arange(0, (nz_sl-0.5)*dx, dx)
         xgrid, zgrid = np.meshgrid(x_sl, z_sl-z_sl.max()/2., indexing="ij")
 
         # get plotting extents
@@ -362,13 +362,40 @@ def plot_results_3d(ds_rec, save_dir):
             y=Y.flatten(),
             z=Z.flatten(),
             value=prediction.flatten(),
-            isomin=min,
+            isomin=0.01,  # hide near-zero (clear-sky) values
             isomax=max,
             opacity=0.1,
-            surface_count=10,
-            colorscale='ice',
+            surface_count=20,
+            colorscale='turbo',
+            caps=dict(x_show=False, y_show=False, z_show=False),
         ))
 
+        # NOTE: Additional stylistic adjustments
+        fig.update_layout(
+            scene=dict(
+        xaxis=dict(visible=False, showbackground=False, showgrid=True, showspikes=False),
+        yaxis=dict(visible=False, showbackground=False, showgrid=True, showspikes=False),
+        zaxis=dict(visible=False, showbackground=False, showgrid=True, showspikes=False),
+        aspectmode="data",  # scale axes proportionally to their actual coordinate ranges
+        ),
+        )
+        z0 = float(Z.min())                     # floor height
+        x_min, x_max = float(X.min()), float(X.max())
+        y_min, y_max = float(Y.min()), float(Y.max())
+        xt = np.linspace(x_min, x_max, 9)       # 9 lines each way; bump for a finer grid
+        yt = np.linspace(y_min, y_max, 9)
+
+        gx, gy, gz = [], [], []
+        for xv in xt:
+            gx += [xv, xv, None]; gy += [y_min, y_max, None]; gz += [z0, z0, None]
+        for yv in yt:
+            gx += [x_min, x_max, None]; gy += [yv, yv, None]; gz += [z0, z0, None]
+
+        fig.add_trace(go.Scatter3d(
+            x=gx, y=gy, z=gz, mode="lines",
+            line=dict(color="rgba(0,0,0,0.3)", width=1),
+            hoverinfo="skip", showlegend=False,
+        ))
         fig.write_html(os.path.join(save_dir, f"predictions_{variable}.html"))
 
 def plot_results_projection(sinogram_padded, test_cloud_3d, angles, dx, yloc, save_dir):
@@ -679,16 +706,36 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--dataset", type=str, default='hybridct', choices=['hybridct', 'vipct'],
+    parser.add_argument("--dataset", type=str, default='hybridct', choices=['hybridct', 'vipct'],
+                        help="Dataset to use: 'hybridct' or 'vipct'")
+    parser.add_argument("--scene", type=str, default="wc_les_RICO_40m_80kmx80km_T_qc_10.5h",
+                        help="Name of the LES scene to analyze")
+    parser.add_argument("--data_path", type=str, default="/Users/annajungbluth/Desktop/data/tomography/nasa-jpl/", 
+                        help="Path to the data directory")
+    parser.add_argument("--volume_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/nasa-jpl/',
+                        help="Path to the volume data directory")
+    parser.add_argument("--mode", choices=["predicted", "truth"],
+                        default="truth", help="prediction mode")
+    # HybridCT-specific arguments
+    # parser.add_argument("--hybridct_cloudid", type=int, default=54,
+    #                     help="Cloud ID to analyze in HybridCT dataset")
+    parser.add_argument("--hybridct_cloudid", type=int, default=50,
+                        help="Cloud ID to analyze in HybridCT dataset")
+    # VIPCT-specific arguments
+    parser.add_argument("--vipct_mode", choices=["coarsen", "upsample", "none"],
+                        default="none", help="resolution adjustment mode for VIPCT dataset")
+    parser.add_argument("--vipct_shift", type=bool, default=True, help="Whether to shift the VIPCT cloud in z to center around the center of mass.")
+
+    # parser.add_argument("--dataset", type=str, default='vipct', choices=['hybridct', 'vipct'],
     #                     help="Dataset to use: 'hybridct' or 'vipct'")
-    # parser.add_argument("--scene", type=str, default="wc_les_RICO_40m_80kmx80km_T_qc_30.0h",
+    # parser.add_argument("--scene", type=str, default='cloud_results_6032',
     #                     help="Name of the LES scene to analyze")
-    # parser.add_argument("--data_path", type=str, default="/Users/annajungbluth/Desktop/data/tomography/nasa-jpl/", 
-    #                     help="Path to the data directory")
-    # parser.add_argument("--volume_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/nasa-jpl/',
+    # parser.add_argument("--data_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/renderer-projection',
+    #                     help="Path to the image data directory")
+    # parser.add_argument("--volume_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/test',
     #                     help="Path to the volume data directory")
-    # parser.add_argument("--mode", choices=["predicted", "truth"],
-    #                     default="truth", help="prediction mode")
+    # parser.add_argument("--mode", choices=["predicted", "projection", "bilinear-ray-sum", "parallel-ray"],
+    #                     default="projection", help="prediction mode")
     # # HybridCT-specific arguments
     # parser.add_argument("--hybridct_cloudid", type=int, default=54,
     #                     help="Cloud ID to analyze in HybridCT dataset")
@@ -696,24 +743,6 @@ if __name__ == "__main__":
     # parser.add_argument("--vipct_mode", choices=["coarsen", "upsample", "none"],
     #                     default="none", help="resolution adjustment mode for VIPCT dataset")
     # parser.add_argument("--vipct_shift", type=bool, default=True, help="Whether to shift the VIPCT cloud in z to center around the center of mass.")
-
-    parser.add_argument("--dataset", type=str, default='vipct', choices=['hybridct', 'vipct'],
-                        help="Dataset to use: 'hybridct' or 'vipct'")
-    parser.add_argument("--scene", type=str, default='cloud_results_6032',
-                        help="Name of the LES scene to analyze")
-    parser.add_argument("--data_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/renderer-projection',
-                        help="Path to the image data directory")
-    parser.add_argument("--volume_path", type=str, default='/Users/annajungbluth/Desktop/data/tomography/technion/VIPCT/BOMEX_256x256x100_5000CCN_50m_micro_256/10cameras_20m (incomplete)/test',
-                        help="Path to the volume data directory")
-    parser.add_argument("--mode", choices=["predicted", "projection", "bilinear-ray-sum", "parallel-ray"],
-                        default="projection", help="prediction mode")
-    # HybridCT-specific arguments
-    parser.add_argument("--hybridct_cloudid", type=int, default=54,
-                        help="Cloud ID to analyze in HybridCT dataset")
-    # VIPCT-specific arguments
-    parser.add_argument("--vipct_mode", choices=["coarsen", "upsample", "none"],
-                        default="none", help="resolution adjustment mode for VIPCT dataset")
-    parser.add_argument("--vipct_shift", type=bool, default=True, help="Whether to shift the VIPCT cloud in z to center around the center of mass.")
     
     args = parser.parse_args()
     main(args)

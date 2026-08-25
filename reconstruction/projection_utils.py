@@ -61,7 +61,8 @@ def project2com(da, cloud_height_avg, dx):
         xarray.DataArray: Projected data.
     """
     data_proj = np.zeros_like(da.data) # create empty array for projected data
-    x_coord = da.sel(vza=0).x.data # x-coordinates from nadir view
+    x_coord = da.isel(vza=np.abs(da.vza).argmin()).x.data
+    # x_coord = da.sel(vza=0).x.data # x-coordinates from nadir view
     for ivza, vza in enumerate(da.vza.data):
         view = da.sel(vza=vza) # select view at given VZA
         # perform parallex correction by projecting to cloud COM height
@@ -262,13 +263,15 @@ def generate_view_alternative(data, delta_z, slx, sly, offset=0, dx=0.04):
     return views
 
 def generate_views(_data, slx, sly, dx, cloud_COM=1.5, angles=[-60,0,60], offset=[]):
-    data = project2com(_data, cloud_COM, dx) # project to cloud COM for parallex correction
+    data = project2com(_data, cloud_COM, dx) # project to cloud COM (x-shift) for parallex correction
     # select nadir view
-    nadir = data.sel(vza=0)[slx, sly]
+    # nadir = data.sel(vza=0)[slx, sly]
+    nadir = data.isel(vza=np.abs(data.vza.data).argmin())[slx, sly]
     # loop over off-nadir views and correct for periodic BCs
     cameras = []
+    nadir_idx = np.abs(np.array(angles)).argmin()
     for ivza, vza in enumerate(angles):
-        if vza == 0:
+        if ivza == nadir_idx:
             cameras.append(nadir)
         else:
             # NOTE: this part crops the quivalent of the cloud region in the off-nadir views

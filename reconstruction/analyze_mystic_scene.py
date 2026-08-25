@@ -269,6 +269,7 @@ if __name__ == "__main__":
         # iterate over a selected region (example slice) and run reconstruction
         # Select one cloud for testing --> this seems to be a pretty small cloud
         for ir, region in enumerate(props[54:55]):
+        # for ir, region in enumerate(props[:1]):
         # for ir, region in enumerate([props[123], props[88]]):
             t0 = datetime.now()
             save_dir = os.path.join(_save_dir, f"cloud_id{region.label:03d}")
